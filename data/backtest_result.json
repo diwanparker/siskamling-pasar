@@ -1,0 +1,282 @@
+{
+ "threshold": 40,
+ "lookback_days": 10,
+ "n_suspended": 24,
+ "n_evaluated": 24,
+ "n_caught": 24,
+ "rows": [
+  {
+   "symbol": "ASPI.JK",
+   "suspended": "2026-10-01",
+   "n_days": 41,
+   "max_score": 77,
+   "caught": true,
+   "lead_days": 14,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "BSWD.JK",
+   "suspended": "2026-10-01",
+   "n_days": 41,
+   "max_score": 90,
+   "caught": true,
+   "lead_days": 3,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "SMMT.JK",
+   "suspended": "2026-10-01",
+   "n_days": 41,
+   "max_score": 59,
+   "caught": true,
+   "lead_days": 3,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "SONA.JK",
+   "suspended": "2026-10-01",
+   "n_days": 41,
+   "max_score": 85,
+   "caught": true,
+   "lead_days": 2,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "TEBE.JK",
+   "suspended": "2026-10-01",
+   "n_days": 41,
+   "max_score": 62,
+   "caught": true,
+   "lead_days": 7,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "ASLI.JK",
+   "suspended": "2026-09-25",
+   "n_days": 42,
+   "max_score": 72,
+   "caught": true,
+   "lead_days": 8,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "SMLE.JK",
+   "suspended": "2026-09-25",
+   "n_days": 42,
+   "max_score": 60,
+   "caught": true,
+   "lead_days": 2,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "WAPO.JK",
+   "suspended": "2026-09-25",
+   "n_days": 42,
+   "max_score": 72,
+   "caught": true,
+   "lead_days": 7,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "NASI.JK",
+   "suspended": "2026-09-22",
+   "n_days": 40,
+   "max_score": 85,
+   "caught": true,
+   "lead_days": 4,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "BIKE.JK",
+   "suspended": "2026-09-21",
+   "n_days": 40,
+   "max_score": 60,
+   "caught": true,
+   "lead_days": 12,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "ALKA.JK",
+   "suspended": "2026-09-16",
+   "n_days": 40,
+   "max_score": 77,
+   "caught": true,
+   "lead_days": 2,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "SEMA.JK",
+   "suspended": "2026-09-16",
+   "n_days": 40,
+   "max_score": 85,
+   "caught": true,
+   "lead_days": 6,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "JARR.JK",
+   "suspended": "2026-09-11",
+   "n_days": 41,
+   "max_score": 44,
+   "caught": true,
+   "lead_days": 1,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "GRPH.JK",
+   "suspended": "2026-09-10",
+   "n_days": 40,
+   "max_score": 85,
+   "caught": true,
+   "lead_days": 14,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "MGLV.JK",
+   "suspended": "2026-09-09",
+   "n_days": 39,
+   "max_score": 65,
+   "caught": true,
+   "lead_days": 1,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "UANG.JK",
+   "suspended": "2026-09-09",
+   "n_days": 39,
+   "max_score": 75,
+   "caught": true,
+   "lead_days": 6,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "LIFE.JK",
+   "suspended": "2026-09-04",
+   "n_days": 41,
+   "max_score": 85,
+   "caught": true,
+   "lead_days": 9,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "NICK.JK",
+   "suspended": "2026-09-04",
+   "n_days": 41,
+   "max_score": 72,
+   "caught": true,
+   "lead_days": 8,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "TRUK.JK",
+   "suspended": "2026-09-04",
+   "n_days": 41,
+   "max_score": 60,
+   "caught": true,
+   "lead_days": 8,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "PPGL.JK",
+   "suspended": "2026-09-02",
+   "n_days": 39,
+   "max_score": 72,
+   "caught": true,
+   "lead_days": 7,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "SAFE.JK",
+   "suspended": "2026-09-02",
+   "n_days": 39,
+   "max_score": 90,
+   "caught": true,
+   "lead_days": 9,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "PACK.JK",
+   "suspended": "2026-09-01",
+   "n_days": 39,
+   "max_score": 77,
+   "caught": true,
+   "lead_days": 14,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "CSMI.JK",
+   "suspended": "2026-08-28",
+   "n_days": 40,
+   "max_score": 75,
+   "caught": true,
+   "lead_days": 16,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  },
+  {
+   "symbol": "EKAD.JK",
+   "suspended": "2026-08-27",
+   "n_days": 39,
+   "max_score": 90,
+   "caught": true,
+   "lead_days": 15,
+   "reason": "Terjadinya peningkatan harga kumulatif yang signifikan pada "
+  }
+ ],
+ "controls": {
+  "stock_days": 400,
+  "alarm_days": 0,
+  "fp_rate": 0.0,
+  "per_symbol": [
+   {
+    "symbol": "BBCA",
+    "days": 40,
+    "alarm_days": 0
+   },
+   {
+    "symbol": "BBRI",
+    "days": 40,
+    "alarm_days": 0
+   },
+   {
+    "symbol": "TLKM",
+    "days": 40,
+    "alarm_days": 0
+   },
+   {
+    "symbol": "ASII",
+    "days": 40,
+    "alarm_days": 0
+   },
+   {
+    "symbol": "UNVR",
+    "days": 40,
+    "alarm_days": 0
+   },
+   {
+    "symbol": "BMRI",
+    "days": 40,
+    "alarm_days": 0
+   },
+   {
+    "symbol": "BBNI",
+    "days": 40,
+    "alarm_days": 0
+   },
+   {
+    "symbol": "ICBP",
+    "days": 40,
+    "alarm_days": 0
+   },
+   {
+    "symbol": "INDF",
+    "days": 40,
+    "alarm_days": 0
+   },
+   {
+    "symbol": "SMGR",
+    "days": 40,
+    "alarm_days": 0
+   }
+  ]
+ }
+}
