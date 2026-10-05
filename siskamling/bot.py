@@ -62,8 +62,14 @@ def score_ticker(symbol: str) -> dict:
     """Ambil data, hitung skor, return dict lengkap."""
     sym = symbol.upper().replace(".JK", "") + ".JK"
     today = date.today()
-    bars = sectors.daily(sym.replace(".JK", ""), (today - timedelta(days=88)).isoformat(), today.isoformat())
-    bars = [b for b in bars if b.get("close") and b.get("open") and b.get("volume")]
+    raw = sectors.daily(sym.replace(".JK", ""), (today - timedelta(days=88)).isoformat(), today.isoformat())
+    bars = []
+    for b in raw:
+        if b.get("close") is not None and b.get("volume") is not None:
+            c = dict(b)
+            if not c.get("open"):
+                c["open"] = c["close"]
+            bars.append(c)
     bars.sort(key=lambda b: b["date"])
     if len(bars) < 21:
         return {"symbol": sym, "error": "Data harian kurang dari 21 bar"}

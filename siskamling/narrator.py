@@ -40,8 +40,8 @@ def _extract_numbers(text: str) -> set[str]:
     return set(re.findall(r"-?\d+(?:\.\d+)?", text))
 
 
-def _numbers_in_data(data: dict) -> set[str]:
-    """Rekursif ambil semua angka dari dict/list."""
+def _numbers_in_data(data: dict | list | str | int | float) -> set[str]:
+    """Rekursif ambil semua angka dari dict/list/str."""
     nums = set()
     if isinstance(data, dict):
         for v in data.values():
@@ -49,6 +49,8 @@ def _numbers_in_data(data: dict) -> set[str]:
     elif isinstance(data, list):
         for v in data:
             nums |= _numbers_in_data(v)
+    elif isinstance(data, str):
+        nums |= _extract_numbers(data)
     elif isinstance(data, (int, float)):
         nums.add(str(data))
         if isinstance(data, float):
@@ -56,6 +58,9 @@ def _numbers_in_data(data: dict) -> set[str]:
             nums.add(f"{data:.2f}")
             nums.add(str(round(data * 100, 1)))  # persen
             nums.add(str(round(data * 100)))
+            # int form jika bulat
+            if data.is_integer():
+                nums.add(str(int(data)))
     return nums
 
 
@@ -74,24 +79,27 @@ def call_llm(data: dict, max_retries: int = 2) -> str | None:
     key = os.environ.get("LLM_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
     if not key:
         return None
+    base_url = os.environ.get("LLM_BASE_URL", "http://127.0.0.1:20129/v1").rstrip("/")
+    model = os.environ.get("LLM_MODEL", "hehe")
     payload = json.dumps({
-        "model": _MODEL,
+        "model": model,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"Data kentongan hari ini:\n```json\n{json.dumps(data, ensure_ascii=False)}\n```\nBuatkan laporan ronda."},
         ],
         "temperature": 0.7,
         "max_tokens": 600,
+        "stream": False,
     }).encode()
     req = urllib.request.Request(
-        f"{_BASE}/chat/completions",
+        f"{base_url}/chat/completions",
         data=payload,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         method="POST",
     )
     for attempt in range(max_retries + 1):
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 body = json.loads(resp.read())
             text = body["choices"][0]["message"]["content"].strip()
             ok, foreign = validate_narration(text, data)
@@ -100,7 +108,7 @@ def call_llm(data: dict, max_retries: int = 2) -> str | None:
             if attempt < max_retries:
                 continue  # retry, LLM sering berhasil di coba ke-2
             return None  # gagal validasi setelah retry
-        except (urllib.error.URLError, KeyError, json.JSONDecodeError):
+        except Exception:
             if attempt < max_retries:
                 continue
             return None
@@ -123,7 +131,15 @@ def fallback(symbol: str, score: int, why: list[str], feat: dict) -> str:
 
 def narrate(symbol: str, score: int, why: list[str], feat: dict) -> str:
     """Coba LLM dulu, fallback ke template kalau gagal."""
-    data = {"symbol": symbol, "score": score, "alasan": why, "fitur": feat}
+    clean_fitur = {
+        "naik_hari_ini": f"{round(feat.get('ret_1d', 0) * 100, 1)}%",
+        "naik_5_hari": f"{round(feat.get('ret_5d', 0) * 100, 1)}%",
+        "naik_20_hari": f"{round(feat.get('ret_20d', 0) * 100, 1)}%",
+        "lonjakan_volume": f"{round(feat.get('vol_ratio', 0), 1)}x",
+        "posisi_rentang_90_hari": f"{round(feat.get('pos_90d', 0) * 100, 1)}%",
+        "di_puncak_90_hari": feat.get("at_90d_high", False),
+    }
+    data = {"symbol": symbol, "score": score, "alasan": why, "ringkasan_fitur": clean_fitur}
     llm_result = call_llm(data)
     if llm_result:
         return llm_result

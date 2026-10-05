@@ -29,7 +29,13 @@ def _d(s: str) -> date:
 def load_bars(symbol: str, end: date) -> list[dict]:
     start = end - timedelta(days=FETCH_SPAN)
     raw = sectors.daily(symbol, start.isoformat(), end.isoformat())
-    bars = [b for b in raw if b.get("close") and b.get("open") and b.get("volume")]
+    bars = []
+    for b in raw:
+        if b.get("close") is not None and b.get("volume") is not None:
+            c = dict(b)
+            if not c.get("open"):
+                c["open"] = c["close"]
+            bars.append(c)
     bars.sort(key=lambda b: b["date"])
     return bars
 
