@@ -2,7 +2,9 @@
 *.env
 !.env.example
 data/cache/
+data/test_*.txt
 runs/
+*.log
 __pycache__/
 *.pyc
 .venv/

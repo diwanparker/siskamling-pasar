@@ -1,126 +1,194 @@
-"""Backtest point-in-time: apakah skor teknikal menandai saham SEBELUM disuspensi BEI?
+"""Backtest point-in-time: Pengujian skor teknikal anti-pom-pom terhadap data historis suspensi BEI.
 
-Aturan anti look-ahead:
-- Untuk hari i, skor hanya memakai bars[: i + 1].
-- Bar pada/setelah tanggal suspensi dibuang.
-- Ambang skor ditetapkan di konstanta di bawah, bukan dicari dari hasil.
-Kontrol: sampel saham yang TIDAK disuspensi pada periode yang sama (untuk false positive rate).
+Aturan Anti Look-Ahead:
+- Pada hari evaluasi `t`, kalkulasi hanya menggunakan baris data `bars[:t+1]`.
+- Bar data pada atau setelah tanggal suspensi diabaikan.
+- Ambang skor (threshold) ditetapkan di awal (ex-ante), bukan hasil fitting data.
+- Dilengkapi kelompok kontrol (saham blue chip) untuk mengukur False Positive Rate.
 """
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 from . import sectors
-from .score import features, tech_score
+from .score import calculate_risk_score, extract_features
 
-THRESHOLD = 40          # skor >= ini dianggap "kentongan"
-LOOKBACK_DAYS = 10      # hitung "tertangkap" jika ada alarm di T-10..T-1 (hari bursa)
-FETCH_SPAN = 88        # hari kalender per tarikan (batas endpoint 90)
-ROOT = Path(__file__).resolve().parent.parent
+logger = logging.getLogger(__name__)
 
-
-def _d(s: str) -> date:
-    return date.fromisoformat(s[:10])
+SCORE_THRESHOLD = 40
+EVALUATION_LOOKBACK_DAYS = 10
+FETCH_SPAN_DAYS = 88
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-def load_bars(symbol: str, end: date) -> list[dict]:
-    start = end - timedelta(days=FETCH_SPAN)
-    raw = sectors.daily(symbol, start.isoformat(), end.isoformat())
-    bars = []
-    for b in raw:
-        if b.get("close") is not None and b.get("volume") is not None:
-            c = dict(b)
-            if not c.get("open"):
-                c["open"] = c["close"]
-            bars.append(c)
-    bars.sort(key=lambda b: b["date"])
-    return bars
+def parse_date(date_str: str) -> date:
+    """Konversi string ISO date (YYYY-MM-DD) menjadi objek date."""
+    return date.fromisoformat(date_str[:10])
 
 
-def scan(bars: list[dict], cutoff: date | None) -> list[dict]:
-    """Skor tiap hari. Jika cutoff diberikan, hanya bar sebelum cutoff yang dipakai."""
-    if cutoff:
-        bars = [b for b in bars if _d(b["date"]) < cutoff]
-    out = []
-    for i in range(20, len(bars)):
-        f = features(bars[: i + 1])          # <- tidak ada akses ke bars[i+1:]
-        if f is None:
+def load_daily_bars(symbol: str, end_date: date) -> list[dict[str, Any]]:
+    """Tarik baris data harian yang sudah ternormalisasi hingga end_date."""
+    start_date = end_date - timedelta(days=FETCH_SPAN_DAYS)
+    return sectors.daily(symbol, start_date.isoformat(), end_date.isoformat(), clean=True)
+
+
+def scan_historical_bars(bars: list[dict[str, Any]], cutoff_date: date | None = None) -> list[dict[str, Any]]:
+    """Kalkulasi skor harian secara point-in-time.
+
+    Data dipotong ketat sebelum cutoff_date jika ditentukan.
+    """
+    if cutoff_date:
+        bars = [b for b in bars if parse_date(str(b["date"])) < cutoff_date]
+
+    daily_scores: list[dict[str, Any]] = []
+    for index in range(20, len(bars)):
+        window = bars[: index + 1]  # Strict point-in-time slice
+        features = extract_features(window)
+        if features is None:
             continue
-        sc, why = tech_score(f)
-        out.append({"date": bars[i]["date"][:10], "score": sc, "why": why, "ret_1d": f["ret_1d"]})
-    return out
-
-
-def evaluate_suspended(susp: list[dict]) -> list[dict]:
-    rows = []
-    for x in susp:
-        sym, sd = x["symbol"], _d(x["suspension_date"])
-        try:
-            bars = load_bars(sym, sd)
-        except sectors.SectorsError as e:
-            rows.append({"symbol": sym, "suspended": str(sd), "error": str(e)[:80]})
-            continue
-        days = scan(bars, sd)
-        if not days:
-            rows.append({"symbol": sym, "suspended": str(sd), "error": "bar kurang dari 21"})
-            continue
-        win = days[-LOOKBACK_DAYS:]
-        hit = [d for d in win if d["score"] >= THRESHOLD]
-        first = hit[0] if hit else None
-        rows.append({
-            "symbol": sym, "suspended": str(sd), "n_days": len(days),
-            "max_score": max(d["score"] for d in win),
-            "caught": bool(hit),
-            "lead_days": (sd - _d(first["date"])).days if first else None,
-            "reason": (x.get("reason") or "")[:60],
+        score, reasons = calculate_risk_score(features)
+        daily_scores.append({
+            "date": str(bars[index]["date"])[:10],
+            "score": score,
+            "reasons": reasons,
+            "return_1d": features["return_1d"],
         })
-    return rows
+    return daily_scores
 
 
-def evaluate_controls(symbols: list[str], end: date) -> dict:
-    """Berapa persen hari-saham biasa yang memicu alarm (false positive per saham-hari)."""
-    total = alarms = 0
-    per = []
-    for sym in symbols:
+def evaluate_suspended_stocks(suspensions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Evaluasi apakah saham yang disuspensi BEI berhasil dideteksi sebelum tanggal suspensi."""
+    evaluation_rows: list[dict[str, Any]] = []
+
+    for item in suspensions:
+        symbol = str(item["symbol"])
+        suspension_date = parse_date(str(item["suspension_date"]))
+
         try:
-            bars = load_bars(sym, end)
+            bars = load_daily_bars(symbol, suspension_date)
+        except sectors.SectorsError as err:
+            evaluation_rows.append({"symbol": symbol, "suspended": str(suspension_date), "error": str(err)[:80]})
+            continue
+
+        historical_scans = scan_historical_bars(bars, cutoff_date=suspension_date)
+        if not historical_scans:
+            evaluation_rows.append({
+                "symbol": symbol,
+                "suspended": str(suspension_date),
+                "error": "Jumlah baris data kurang dari batas minimum",
+            })
+            continue
+
+        evaluation_window = historical_scans[-EVALUATION_LOOKBACK_DAYS:]
+        alert_days = [day for day in evaluation_window if day["score"] >= SCORE_THRESHOLD]
+        first_alert = alert_days[0] if alert_days else None
+
+        lead_days = (suspension_date - parse_date(first_alert["date"])).days if first_alert else None
+        max_score = max(day["score"] for day in evaluation_window)
+
+        evaluation_rows.append({
+            "symbol": symbol,
+            "suspended": str(suspension_date),
+            "n_days": len(historical_scans),
+            "max_score": max_score,
+            "caught": bool(alert_days),
+            "lead_days": lead_days,
+            "reason": str(item.get("reason", ""))[:60],
+        })
+
+    return evaluation_rows
+
+
+def evaluate_control_stocks(symbols: list[str], end_date: date) -> dict[str, Any]:
+    """Evaluasi kelompok kontrol untuk menghitung False Positive Rate."""
+    total_stock_days = 0
+    total_alarm_days = 0
+    per_symbol_breakdown: list[dict[str, Any]] = []
+
+    for symbol in symbols:
+        try:
+            bars = load_daily_bars(symbol, end_date)
         except sectors.SectorsError:
             continue
-        days = scan(bars, None)[-40:]
-        a = sum(1 for d in days if d["score"] >= THRESHOLD)
-        total += len(days); alarms += a
-        per.append({"symbol": sym, "days": len(days), "alarm_days": a})
-    return {"stock_days": total, "alarm_days": alarms,
-            "fp_rate": (alarms / total) if total else None, "per_symbol": per}
+
+        recent_days = scan_historical_bars(bars)[-40:]
+        alarm_count = sum(1 for day in recent_days if day["score"] >= SCORE_THRESHOLD)
+
+        total_stock_days += len(recent_days)
+        total_alarm_days += alarm_count
+        per_symbol_breakdown.append({
+            "symbol": symbol,
+            "days": len(recent_days),
+            "alarm_days": alarm_count,
+        })
+
+    fp_rate = (total_alarm_days / total_stock_days) if total_stock_days else 0.0
+    return {
+        "stock_days": total_stock_days,
+        "alarm_days": total_alarm_days,
+        "fp_rate": fp_rate,
+        "per_symbol": per_symbol_breakdown,
+    }
 
 
-def main(controls_file: str | None = None) -> None:
-    susp = json.loads((ROOT / "data" / "suspensions.json").read_text())
-    susp = [x for x in susp if "harga" in (x.get("reason") or "").lower()]
-    seen, uniq = set(), []
-    for x in susp:                       # satu baris per saham (suspensi paling awal)
-        if x["symbol"] not in seen:
-            seen.add(x["symbol"]); uniq.append(x)
-    rows = evaluate_suspended(uniq)
-    ok = [r for r in rows if "error" not in r]
-    res = {"threshold": THRESHOLD, "lookback_days": LOOKBACK_DAYS,
-           "n_suspended": len(uniq), "n_evaluated": len(ok),
-           "n_caught": sum(r["caught"] for r in ok), "rows": rows}
-    if controls_file:
-        syms = json.loads(Path(controls_file).read_text())
-        susp_syms = {x["symbol"] for x in uniq}
-        syms = [s for s in syms if s not in susp_syms]
-        res["controls"] = evaluate_controls(syms, date(2026, 10, 1))
-    out = ROOT / "data" / "backtest_result.json"
-    out.write_text(json.dumps(res, indent=1, default=str))
-    print(f"evaluated={res['n_evaluated']}/{res['n_suspended']} caught={res['n_caught']}")
-    if "controls" in res:
-        c = res["controls"]
-        print(f"controls stock_days={c['stock_days']} alarm_days={c['alarm_days']} fp={c['fp_rate']}")
+def run_backtest(controls_path: str | None = None) -> dict[str, Any]:
+    """Jalankan siklus backtest lengkap dan simpan hasilnya ke data/backtest_result.json."""
+    suspensions_file = PROJECT_ROOT / "data" / "suspensions.json"
+    suspensions_data: list[dict[str, Any]] = json.loads(suspensions_file.read_text(encoding="utf-8"))
+
+    # Filter hanya suspensi terkait lonjakan harga kumulatif
+    price_suspensions = [
+        item for item in suspensions_data if "harga" in str(item.get("reason", "")).lower()
+    ]
+
+    # Ambil catatan suspensi pertama per saham unik
+    seen_symbols: set[str] = set()
+    unique_suspensions: list[dict[str, Any]] = []
+    for item in price_suspensions:
+        symbol = str(item["symbol"])
+        if symbol not in seen_symbols:
+            seen_symbols.add(symbol)
+            unique_suspensions.append(item)
+
+    evaluation_rows = evaluate_suspended_stocks(unique_suspensions)
+    valid_evaluations = [row for row in evaluation_rows if "error" not in row]
+
+    summary: dict[str, Any] = {
+        "threshold": SCORE_THRESHOLD,
+        "lookback_days": EVALUATION_LOOKBACK_DAYS,
+        "n_suspended": len(unique_suspensions),
+        "n_evaluated": len(valid_evaluations),
+        "n_caught": sum(1 for row in valid_evaluations if row.get("caught")),
+        "rows": evaluation_rows,
+    }
+
+    if controls_path:
+        controls_file = Path(controls_path)
+        control_symbols: list[str] = json.loads(controls_file.read_text(encoding="utf-8"))
+        # Pastikan tidak ada saham suspensi yang ikut di kelompok kontrol
+        filtered_controls = [s for s in control_symbols if s not in seen_symbols]
+        summary["controls"] = evaluate_control_stocks(filtered_controls, date(2026, 10, 1))
+
+    output_file = PROJECT_ROOT / "data" / "backtest_result.json"
+    output_file.write_text(json.dumps(summary, indent=1, default=str), encoding="utf-8")
+
+    print(f"evaluated={summary['n_evaluated']}/{summary['n_suspended']} caught={summary['n_caught']}")
+    if "controls" in summary:
+        ctrl = summary["controls"]
+        print(f"controls stock_days={ctrl['stock_days']} alarm_days={ctrl['alarm_days']} fp={ctrl['fp_rate']}")
+
+    return summary
+
+
+def main() -> None:
+    controls_arg = sys.argv[1] if len(sys.argv) > 1 else None
+    run_backtest(controls_arg)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else None)
+    main()

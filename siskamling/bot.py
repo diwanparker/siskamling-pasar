@@ -1,13 +1,15 @@
-"""Bot Telegram Siskamling Pasar.
+"""Bot Telegram Siskamling Pasar & Runner Broadcast.
 
 Fitur:
-- /ronda TICKER — cek skor satu saham secara interaktif
-- /start, /help — pengantar
-- Broadcast harian — dipanggil dari cron via `python -m siskamling.bot --broadcast`
+- `/ronda TICKER` — Pemeriksaan interaktif risiko satu saham.
+- `/start`, `/help` — Panduan penggunaan bot.
+- `--broadcast` — Eksekusi patroli harian (cron) + penyimpanan run manifest.
+- `--test TICKER` — Pengujian mandiri tanpa Telegram.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -16,210 +18,263 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 from . import sectors
 from .narrator import narrate
-from .score import features, tech_score
+from .score import calculate_risk_score, extract_features
 
-logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
-log = logging.getLogger("siskamling")
+logging.basicConfig(format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", level=logging.INFO)
+logger = logging.getLogger("siskamling.bot")
 
-TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "")  # chat/channel untuk broadcast
-BASE_TG = "https://api.telegram.org/bot"
-ROOT = Path(__file__).resolve().parent.parent
-RUNS_DIR = ROOT / "runs"
+TELEGRAM_API_BASE = "https://api.telegram.org/bot"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+RUNS_DIRECTORY = PROJECT_ROOT / "runs"
+DEFAULT_FETCH_DAYS = 88
+MINIMUM_REQUIRED_BARS = 21
+RISK_ALERT_THRESHOLD = 40
 
-# ─── Telegram helpers ───────────────────────────────────────────────
 
-def tg_request(method: str, data: dict) -> dict | None:
-    if not TG_TOKEN:
-        log.warning("TELEGRAM_BOT_TOKEN belum di-set"); return None
-    url = f"{BASE_TG}{TG_TOKEN}/{method}"
-    payload = json.dumps(data).encode()
-    req = urllib.request.Request(url, data=payload,
-        headers={"Content-Type": "application/json"}, method="POST")
+def get_telegram_token() -> str:
+    return os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+
+
+def get_telegram_chat_id() -> str:
+    return os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+
+
+# ─── Telegram API Client ───────────────────────────────────────────
+
+def send_telegram_request(method: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Kirim request POST ke Telegram Bot API."""
+    token = get_telegram_token()
+    if not token:
+        logger.warning("TELEGRAM_BOT_TOKEN belum dikonfigurasi")
+        return None
+
+    url = f"{TELEGRAM_API_BASE}{token}/{method}"
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        log.error("TG %s: %s %s", method, e.code, e.read()[:200])
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        logger.error("Telegram API error %s: %s", error.code, error.read()[:200])
+        return None
+    except urllib.error.URLError as error:
+        logger.error("Koneksi Telegram gagal: %s", error)
         return None
 
 
-def tg_send(chat_id: str, text: str, parse_mode: str = "Markdown") -> dict | None:
-    return tg_request("sendMessage", {
-        "chat_id": chat_id, "text": text, "parse_mode": parse_mode,
+def send_message(chat_id: str, text: str, parse_mode: str = "Markdown") -> dict[str, Any] | None:
+    """Kirim pesan teks ke chat Telegram."""
+    return send_telegram_request("sendMessage", {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": parse_mode,
         "disable_web_page_preview": True,
     })
 
 
-# ─── Skor satu saham ────────────────────────────────────────────────
+# ─── Penilaian Saham Tunggal ───────────────────────────────────────
 
-def score_ticker(symbol: str) -> dict:
-    """Ambil data, hitung skor, return dict lengkap."""
-    sym = symbol.upper().replace(".JK", "") + ".JK"
+def score_ticker(symbol: str) -> dict[str, Any]:
+    """Tarik data dan hitung skor risiko teknikal suatu saham."""
+    clean_symbol = symbol.upper().replace(".JK", "")
+    full_symbol = f"{clean_symbol}.JK"
     today = date.today()
-    raw = sectors.daily(sym.replace(".JK", ""), (today - timedelta(days=88)).isoformat(), today.isoformat())
-    bars = []
-    for b in raw:
-        if b.get("close") is not None and b.get("volume") is not None:
-            c = dict(b)
-            if not c.get("open"):
-                c["open"] = c["close"]
-            bars.append(c)
-    bars.sort(key=lambda b: b["date"])
-    if len(bars) < 21:
-        return {"symbol": sym, "error": "Data harian kurang dari 21 bar"}
-    feat = features(bars)
-    if feat is None:
-        return {"symbol": sym, "error": "Gagal hitung fitur"}
-    sc, why = tech_score(feat)
-    narration = narrate(sym, sc, why, feat)
-    return {"symbol": sym, "score": sc, "why": why, "features": feat, "narration": narration}
+    start_date = today - timedelta(days=DEFAULT_FETCH_DAYS)
 
-
-# ─── /ronda handler ─────────────────────────────────────────────────
-
-def handle_ronda(chat_id: str, text: str):
-    parts = text.strip().split()
-    if len(parts) < 2:
-        tg_send(chat_id, "Pakai: `/ronda BBCA` atau `/ronda UNSP`")
-        return
-    ticker = parts[1].upper()
-    tg_send(chat_id, f"⏳ Lagi patroli {ticker}...")
-    result = score_ticker(ticker)
-    if "error" in result:
-        tg_send(chat_id, f"❌ {ticker}: {result['error']}")
-        return
-    tg_send(chat_id, result["narration"])
-
-
-# ─── Broadcast harian ───────────────────────────────────────────────
-
-def daily_broadcast():
-    """Scan top gainers, hitung skor, kirim yang >= 40 ke channel."""
-    import hashlib
-    from datetime import datetime, timezone
-
-    log.info("Mulai broadcast harian")
-    started = datetime.now(timezone.utc).isoformat()
-
-    # Ambil top gainers hari ini
     try:
-        gainers = sectors.get("/v2/companies/top-changes/", {
-            "classifications": "top_gainers", "periods": "1d",
-            "n_stock": 20, "min_mcap_billion": 0,
-        }, cache=False)
-    except sectors.SectorsError as e:
-        log.error("Gagal ambil top gainers: %s", e)
-        return
+        bars = sectors.daily(clean_symbol, start_date.isoformat(), today.isoformat(), clean=True)
+    except sectors.SectorsError as error:
+        return {"symbol": full_symbol, "error": f"Gagal mengambil data dari Sectors: {error}"}
 
-    gainer_list = gainers.get("top_gainers", {}).get("1d", [])
-    if not gainer_list:
-        log.warning("Tidak ada top gainers hari ini")
-        return
+    if len(bars) < MINIMUM_REQUIRED_BARS:
+        return {"symbol": full_symbol, "error": f"Data harian kurang dari {MINIMUM_REQUIRED_BARS} bar"}
 
-    alerts = []
-    errors = []
-    for g in gainer_list:
-        sym = g.get("symbol", "").replace(".JK", "")
-        if not sym:
-            continue
-        try:
-            r = score_ticker(sym)
-            if "error" in r:
-                errors.append(f"{sym}: {r['error']}")
-                continue
-            if r["score"] >= 40:
-                alerts.append(r)
-        except Exception as e:
-            errors.append(f"{sym}: {e}")
+    features = extract_features(bars)
+    if features is None:
+        return {"symbol": full_symbol, "error": "Gagal menghitung fitur teknikal"}
 
-    # Kirim ke channel
-    if not alerts:
-        msg = "🛡️ *Laporan Ronda Sore*\n\nHari ini aman, tidak ada saham mencurigakan dari top gainers."
-        tg_send(TG_CHAT, msg)
-    else:
-        header = f"🔔 *Laporan Ronda Sore — {date.today().isoformat()}*\n\n{len(alerts)} saham masuk radar:\n"
-        tg_send(TG_CHAT, header)
-        for a in sorted(alerts, key=lambda x: -x["score"]):
-            tg_send(TG_CHAT, a["narration"])
-            time.sleep(1)  # rate limit
+    score, reasons = calculate_risk_score(features)
+    narration = narrate(full_symbol, score, reasons, features)
 
-    # Run manifest
-    manifest = {
-        "run_id": hashlib.sha1(started.encode()).hexdigest()[:12],
-        "started_at": started,
-        "finished_at": datetime.now(timezone.utc).isoformat(),
-        "n_gainers_scanned": len(gainer_list),
-        "n_alerts": len(alerts),
-        "n_errors": len(errors),
-        "alerts": [{"symbol": a["symbol"], "score": a["score"]} for a in alerts],
-        "errors": errors[:10],
+    return {
+        "symbol": full_symbol,
+        "score": score,
+        "reasons": reasons,
+        "features": features,
+        "narration": narration,
     }
-    RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    mpath = RUNS_DIR / f"{date.today().isoformat()}.json"
-    mpath.write_text(json.dumps(manifest, indent=1))
-    log.info("Manifest: %s", mpath)
 
 
-# ─── Polling loop ───────────────────────────────────────────────────
+# ─── Handler Perintah Interaktif ───────────────────────────────────
 
-def poll():
-    """Long-polling bot Telegram sederhana."""
-    if not TG_TOKEN:
-        log.error("TELEGRAM_BOT_TOKEN harus di-set")
+def handle_ronda_command(chat_id: str, message_text: str) -> None:
+    """Proses perintah /ronda TICKER."""
+    tokens = message_text.strip().split()
+    if len(tokens) < 2:
+        send_message(chat_id, "ℹ️ Format perintah: `/ronda TICKER` (contoh: `/ronda BBCA` atau `/ronda UNSP`)")
+        return
+
+    ticker = tokens[1].upper()
+    send_message(chat_id, f"⏳ Sedang patroli ke pos saham *{ticker}*...")
+    evaluation = score_ticker(ticker)
+
+    if "error" in evaluation:
+        send_message(chat_id, f"❌ *{ticker}*: {evaluation['error']}")
+        return
+
+    send_message(chat_id, evaluation["narration"])
+
+
+# ─── Patroli Harian & Run Manifest ─────────────────────────────────
+
+def execute_daily_broadcast() -> None:
+    """Pindai top gainers harian, evaluasi risiko, broadcast alert, dan catat manifest."""
+    logger.info("Memulai patroli ronda broadcast harian")
+    start_timestamp = datetime.now(timezone.utc).isoformat()
+    chat_id = get_telegram_chat_id()
+
+    try:
+        gainers_response = sectors.get("/v2/companies/top-changes/", {
+            "classifications": "top_gainers",
+            "periods": "1d",
+            "n_stock": 20,
+            "min_mcap_billion": 0,
+        }, cache=False)
+    except sectors.SectorsError as error:
+        logger.error("Gagal mengambil daftar top gainers: %s", error)
+        return
+
+    gainer_items = gainers_response.get("top_gainers", {}).get("1d", [])
+    if not gainer_items:
+        logger.warning("Tidak ada daftar top gainers untuk hari ini")
+        return
+
+    triggered_alerts: list[dict[str, Any]] = []
+    encountered_errors: list[str] = []
+
+    for item in gainer_items:
+        symbol = item.get("symbol", "").replace(".JK", "")
+        if not symbol:
+            continue
+
+        try:
+            result = score_ticker(symbol)
+            if "error" in result:
+                encountered_errors.append(f"{symbol}: {result['error']}")
+                continue
+            if result["score"] >= RISK_ALERT_THRESHOLD:
+                triggered_alerts.append(result)
+        except Exception as error:  # Defensive catch for unexpected item failure
+            encountered_errors.append(f"{symbol}: {error}")
+
+    # Kirim hasil ronda ke kanal/grup Telegram jika chat_id tersedia
+    if chat_id:
+        if not triggered_alerts:
+            safe_message = "🛡️ *Laporan Ronda Sore*\n\nSituasi pasar terpantau kondusif. Tidak ada saham mencurigakan pada jajaran top gainers hari ini."
+            send_message(chat_id, safe_message)
+        else:
+            header_message = (
+                f"🔔 *Laporan Ronda Sore — {date.today().isoformat()}*\n\n"
+                f"Perhatian warga, terdeteksi *{len(triggered_alerts)} saham* masuk radar risiko:\n"
+            )
+            send_message(chat_id, header_message)
+            for alert in sorted(triggered_alerts, key=lambda a: -a["score"]):
+                send_message(chat_id, alert["narration"])
+                time.sleep(1)  # Hindari Telegram API rate limit
+
+    # Simpan Run Manifest (Bukti otomasi terjadwal tanpa intervensi manusia)
+    run_manifest = {
+        "run_id": hashlib.sha1(start_timestamp.encode()).hexdigest()[:12],
+        "started_at": start_timestamp,
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "n_gainers_scanned": len(gainer_items),
+        "n_alerts": len(triggered_alerts),
+        "n_errors": len(encountered_errors),
+        "alerts": [{"symbol": a["symbol"], "score": a["score"]} for a in triggered_alerts],
+        "errors": encountered_errors[:10],
+    }
+    RUNS_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    manifest_path = RUNS_DIRECTORY / f"{date.today().isoformat()}.json"
+    manifest_path.write_text(json.dumps(run_manifest, indent=2), encoding="utf-8")
+    logger.info("Run manifest berhasil disimpan: %s", manifest_path)
+
+
+# ─── Long Polling Loop ─────────────────────────────────────────────
+
+def run_polling_loop() -> None:
+    """Jalankan long-polling daemon untuk merespons pesan Telegram secara live."""
+    token = get_telegram_token()
+    if not token:
+        logger.error("TELEGRAM_BOT_TOKEN wajib diisi untuk menjalankan polling")
         sys.exit(1)
-    log.info("Bot mulai polling...")
-    offset = 0
+
+    logger.info("Bot Siskamling Pasar siap berpatroli (polling mode aktif)...")
+    last_update_id = 0
+
     while True:
         try:
-            r = tg_request("getUpdates", {"offset": offset, "timeout": 30})
-            if not r or not r.get("ok"):
-                time.sleep(5); continue
-            for upd in r.get("result", []):
-                offset = upd["update_id"] + 1
-                msg = upd.get("message", {})
-                text = msg.get("text", "")
-                chat_id = str(msg.get("chat", {}).get("id", ""))
-                if not chat_id:
+            updates = send_telegram_request("getUpdates", {"offset": last_update_id, "timeout": 30})
+            if not updates or not updates.get("ok"):
+                time.sleep(5)
+                continue
+
+            for update in updates.get("result", []):
+                last_update_id = update["update_id"] + 1
+                message = update.get("message", {})
+                message_text = str(message.get("text", ""))
+                chat_id = str(message.get("chat", {}).get("id", ""))
+
+                if not chat_id or not message_text:
                     continue
-                if text.startswith("/ronda"):
-                    handle_ronda(chat_id, text)
-                elif text.startswith("/start") or text.startswith("/help"):
-                    tg_send(chat_id, (
+
+                if message_text.startswith("/ronda"):
+                    handle_ronda_command(chat_id, message_text)
+                elif message_text.startswith("/start") or message_text.startswith("/help"):
+                    welcome_text = (
                         "🏘️ *Siskamling Pasar*\n\n"
-                        "Bot pemantau saham mencurigakan di IDX.\n\n"
-                        "• `/ronda BBCA` — cek skor satu saham\n"
-                        "• Broadcast otomatis tiap hari bursa sore\n\n"
-                        "⚠️ Bukan saran investasi. Data dari Sectors.app."
-                    ))
+                        "Pos ronda otomatis untuk mendeteksi saham berisiko pom-pom di IDX.\n\n"
+                        "• `/ronda TICKER` — Periksa skor risiko suatu saham (contoh: `/ronda BBCA`)\n"
+                        "• Patroli sore otomatis setiap hari bursa jam 16:30 WIB.\n\n"
+                        "⚠️ *Bukan saran investasi.* Data publik bersumber dari Sectors.app."
+                    )
+                    send_message(chat_id, welcome_text)
+
         except KeyboardInterrupt:
-            log.info("Bot berhenti"); break
-        except Exception as e:
-            log.error("Poll error: %s", e)
+            logger.info("Polling dihentikan oleh pengguna")
+            break
+        except Exception as err:
+            logger.error("Kesalahan pada polling loop: %s", err)
             time.sleep(5)
 
 
-# ─── CLI ─────────────────────────────────────────────────────────────
+# ─── CLI Entrypoint ────────────────────────────────────────────────
 
-def main():
-    parser = argparse.ArgumentParser(description="Siskamling Pasar Bot")
-    parser.add_argument("--broadcast", action="store_true", help="Jalankan broadcast harian")
-    parser.add_argument("--poll", action="store_true", help="Jalankan polling bot")
-    parser.add_argument("--test", metavar="TICKER", help="Tes skor satu saham (tanpa Telegram)")
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Bot & Runner Siskamling Pasar")
+    parser.add_argument("--broadcast", action="store_true", help="Jalankan siklus patroli dan broadcast harian")
+    parser.add_argument("--poll", action="store_true", help="Jalankan listener Telegram dalam mode polling")
+    parser.add_argument("--test", metavar="TICKER", help="Uji kalkulasi dan narasi satu ticker di konsol")
     args = parser.parse_args()
 
     if args.broadcast:
-        daily_broadcast()
+        execute_daily_broadcast()
     elif args.test:
-        r = score_ticker(args.test)
-        print(json.dumps(r, indent=1, ensure_ascii=False, default=str))
+        result = score_ticker(args.test)
+        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
     elif args.poll:
-        poll()
+        run_polling_loop()
     else:
         parser.print_help()
 
