@@ -1,0 +1,21 @@
+{
+ "symbol": "BSWD.JK",
+ "score": 85,
+ "why": [
+  "naik >=25% dalam 5 hari",
+  "naik >=60% dalam 20 hari",
+  "volume >=5x rata-rata 20 hari",
+  "di puncak 90 hari"
+ ],
+ "features": {
+  "ret_1d": 0.25,
+  "ret_5d": 1.4242424242424243,
+  "ret_20d": 1.4,
+  "vol_ratio": 12.190760059612519,
+  "gap": -1.0,
+  "upper_wick": 0.0,
+  "pos_90d": 1.0,
+  "at_90d_high": true
+ },
+ "narration": "🚨 BSWD — Skor Kentongan: 85/100\n\n• naik >=25% dalam 5 hari\n• naik >=60% dalam 20 hari\n• volume >=5x rata-rata 20 hari\n• di puncak 90 hari\n\nHarga: naik (+ 25.0%)\nVolume: 12.2x dari rata-rata 20 hari\n\n⚠️ Ini bukan saran investasi. Data dari Sectors.app."
+}
