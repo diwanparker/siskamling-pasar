@@ -58,7 +58,7 @@ Diuji terhadap **24 saham yang disuspensi BEI** karena "peningkatan harga kumula
 ## Setup
 
 ```bash
-git clone https://github.com/YOURUSERNAME/siskamling-pasar.git
+git clone https://github.com/diwanparker/siskamling-pasar.git
 cd siskamling-pasar
 cp .env.example .env
 # Isi .env dengan API key Sectors, token bot Telegram, dll.
@@ -69,12 +69,21 @@ python3 -m siskamling.bot --test BBCA
 # Jalankan bot polling (interaktif)
 python3 -m siskamling.bot --poll
 
-# Broadcast manual
+# Broadcast manual (CLI)
 python3 -m siskamling.bot --broadcast
 
 # Cron (tambah ke crontab -e)
 30 16 * * 1-5 /path/to/siskamling-pasar/run_broadcast.sh
 ```
+
+## Otomasi n8n (Visual UI Workflow)
+
+Untuk kolaborasi tim atau pengguna yang ingin memantau dan mengontrol jadwal patroli secara visual:
+1. Buka dashboard n8n (misalnya `http://localhost:5678`).
+2. Pilih menu **Workflows** ➔ **Add workflow** ➔ ikon titik tiga (**...**) di kanan atas ➔ **Import from File**.
+3. Pilih file `workflows/siskamling_patrol_workflow.json` dari repositori ini.
+4. Buka node **Configuration** untuk menyesuaikan variabel tanpa perlu menyentuh kode Python (`alert_threshold`, `n_gainers`, `fetch_days`).
+5. Klik **Publish / Activate** untuk mengaktifkan scheduler otomatis pukul 16:30 WIB setiap hari bursa, atau klik tombol **Test Patrol On-Demand** untuk eksekusi langsung.
 
 ## Struktur
 
@@ -86,6 +95,9 @@ siskamling-pasar/
 │   ├── narrator.py     # LLM narator + validator angka + fallback template
 │   ├── backtest.py     # Point-in-time backtest vs suspensi BEI
 │   └── bot.py          # Bot Telegram (polling + broadcast + manifest)
+├── workflows/
+│   └── siskamling_patrol_workflow.json  # Workflow visual n8n
+├── tests/              # Unit test deterministik
 ├── data/
 │   ├── backtest_result.json
 │   ├── controls.json
