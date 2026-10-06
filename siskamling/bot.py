@@ -86,12 +86,12 @@ def send_message(chat_id: str, text: str, parse_mode: str = "Markdown") -> dict[
 
 # ─── Penilaian Saham Tunggal ───────────────────────────────────────
 
-def score_ticker(symbol: str) -> dict[str, Any]:
+def score_ticker(symbol: str, days: int = DEFAULT_FETCH_DAYS) -> dict[str, Any]:
     """Tarik data dan hitung skor risiko teknikal suatu saham."""
     clean_symbol = symbol.upper().replace(".JK", "")
     full_symbol = f"{clean_symbol}.JK"
     today = date.today()
-    start_date = today - timedelta(days=DEFAULT_FETCH_DAYS)
+    start_date = today - timedelta(days=days)
 
     try:
         bars = sectors.daily(clean_symbol, start_date.isoformat(), today.isoformat(), clean=True)
@@ -139,9 +139,22 @@ def handle_ronda_command(chat_id: str, message_text: str) -> None:
 
 # ─── Patroli Harian & Run Manifest ─────────────────────────────────
 
-def execute_daily_broadcast() -> None:
+def execute_daily_broadcast(
+    threshold: int | None = None,
+    n_gainers: int | None = None,
+    fetch_days: int | None = None,
+) -> dict[str, Any]:
     """Pindai top gainers harian, evaluasi risiko, broadcast alert, dan catat manifest."""
-    logger.info("Memulai patroli ronda broadcast harian")
+    resolved_threshold = threshold if threshold is not None else int(os.environ.get("RISK_ALERT_THRESHOLD", RISK_ALERT_THRESHOLD))
+    resolved_n_gainers = n_gainers if n_gainers is not None else int(os.environ.get("N_GAINERS", 20))
+    resolved_fetch_days = fetch_days if fetch_days is not None else int(os.environ.get("FETCH_DAYS", DEFAULT_FETCH_DAYS))
+
+    logger.info(
+        "Memulai patroli ronda broadcast harian (threshold=%d, n_gainers=%d, fetch_days=%d)",
+        resolved_threshold,
+        resolved_n_gainers,
+        resolved_fetch_days,
+    )
     start_timestamp = datetime.now(timezone.utc).isoformat()
     chat_id = get_telegram_chat_id()
 
@@ -149,17 +162,37 @@ def execute_daily_broadcast() -> None:
         gainers_response = sectors.get("/v2/companies/top-changes/", {
             "classifications": "top_gainers",
             "periods": "1d",
-            "n_stock": 20,
+            "n_stock": resolved_n_gainers,
             "min_mcap_billion": 0,
         }, cache=False)
     except sectors.SectorsError as error:
         logger.error("Gagal mengambil daftar top gainers: %s", error)
-        return
+        run_manifest = {
+            "run_id": hashlib.sha1(start_timestamp.encode()).hexdigest()[:12],
+            "started_at": start_timestamp,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "n_gainers_scanned": 0,
+            "n_alerts": 0,
+            "n_errors": 1,
+            "alerts": [],
+            "errors": [str(error)],
+        }
+        return run_manifest
 
     gainer_items = gainers_response.get("top_gainers", {}).get("1d", [])
     if not gainer_items:
         logger.warning("Tidak ada daftar top gainers untuk hari ini")
-        return
+        run_manifest = {
+            "run_id": hashlib.sha1(start_timestamp.encode()).hexdigest()[:12],
+            "started_at": start_timestamp,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "n_gainers_scanned": 0,
+            "n_alerts": 0,
+            "n_errors": 0,
+            "alerts": [],
+            "errors": [],
+        }
+        return run_manifest
 
     triggered_alerts: list[dict[str, Any]] = []
     encountered_errors: list[str] = []
@@ -170,11 +203,11 @@ def execute_daily_broadcast() -> None:
             continue
 
         try:
-            result = score_ticker(symbol)
+            result = score_ticker(symbol, days=resolved_fetch_days)
             if "error" in result:
                 encountered_errors.append(f"{symbol}: {result['error']}")
                 continue
-            if result["score"] >= RISK_ALERT_THRESHOLD:
+            if result["score"] >= resolved_threshold:
                 triggered_alerts.append(result)
         except Exception as error:  # Defensive catch for unexpected item failure
             encountered_errors.append(f"{symbol}: {error}")
@@ -209,6 +242,7 @@ def execute_daily_broadcast() -> None:
     manifest_path = RUNS_DIRECTORY / f"{date.today().isoformat()}.json"
     manifest_path.write_text(json.dumps(run_manifest, indent=2), encoding="utf-8")
     logger.info("Run manifest berhasil disimpan: %s", manifest_path)
+    return run_manifest
 
 
 # ─── Long Polling Loop ─────────────────────────────────────────────
@@ -266,12 +300,22 @@ def main() -> None:
     parser.add_argument("--broadcast", action="store_true", help="Jalankan siklus patroli dan broadcast harian")
     parser.add_argument("--poll", action="store_true", help="Jalankan listener Telegram dalam mode polling")
     parser.add_argument("--test", metavar="TICKER", help="Uji kalkulasi dan narasi satu ticker di konsol")
+    parser.add_argument("--threshold", type=int, default=None, help="Ambang skor risiko untuk alert (default: 40)")
+    parser.add_argument("--n-gainers", type=int, default=None, dest="n_gainers", help="Jumlah saham top gainers yang dipindai (default: 20)")
+    parser.add_argument("--days", type=int, default=None, dest="days", help="Jumlah hari bar OHLCV harian yang diambil (default: 88)")
+    parser.add_argument("--json", action="store_true", help="Cetak run manifest dalam format JSON ke stdout (untuk n8n/otomasi)")
     args = parser.parse_args()
 
     if args.broadcast:
-        execute_daily_broadcast()
+        manifest = execute_daily_broadcast(
+            threshold=args.threshold,
+            n_gainers=args.n_gainers,
+            fetch_days=args.days,
+        )
+        if args.json:
+            print(json.dumps(manifest, indent=2, ensure_ascii=False, default=str))
     elif args.test:
-        result = score_ticker(args.test)
+        result = score_ticker(args.test, days=args.days or DEFAULT_FETCH_DAYS)
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
     elif args.poll:
         run_polling_loop()
