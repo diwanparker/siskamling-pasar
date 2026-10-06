@@ -117,6 +117,30 @@ def score_ticker(symbol: str, days: int = DEFAULT_FETCH_DAYS) -> dict[str, Any]:
     }
 
 
+def dispatch_telegram_alerts(triggered_alerts: list[dict[str, Any]], chat_id: str | None = None) -> None:
+    """Kirim hasil evaluasi ronda ke kanal atau grup Telegram (Decoupled Notification Sink)."""
+    target_chat_id = chat_id or get_telegram_chat_id()
+    if not target_chat_id:
+        return
+
+    if not triggered_alerts:
+        safe_message = (
+            "🛡️ *Laporan Ronda Sore*\n\n"
+            "Situasi pasar terpantau kondusif. Tidak ada saham mencurigakan pada jajaran top gainers hari ini."
+        )
+        send_message(target_chat_id, safe_message)
+        return
+
+    header_message = (
+        f"🔔 *Laporan Ronda Sore — {date.today().isoformat()}*\n\n"
+        f"Perhatian warga, terdeteksi *{len(triggered_alerts)} saham* masuk radar risiko:\n"
+    )
+    send_message(target_chat_id, header_message)
+    for alert in sorted(triggered_alerts, key=lambda a: -a["score"]):
+        send_message(target_chat_id, alert["narration"])
+        time.sleep(1)  # Hindari Telegram API rate limit
+
+
 # ─── Handler Perintah Interaktif ───────────────────────────────────
 
 def handle_ronda_command(chat_id: str, message_text: str) -> None:
@@ -212,20 +236,8 @@ def execute_daily_broadcast(
         except Exception as error:  # Defensive catch for unexpected item failure
             encountered_errors.append(f"{symbol}: {error}")
 
-    # Kirim hasil ronda ke kanal/grup Telegram jika chat_id tersedia
-    if chat_id:
-        if not triggered_alerts:
-            safe_message = "🛡️ *Laporan Ronda Sore*\n\nSituasi pasar terpantau kondusif. Tidak ada saham mencurigakan pada jajaran top gainers hari ini."
-            send_message(chat_id, safe_message)
-        else:
-            header_message = (
-                f"🔔 *Laporan Ronda Sore — {date.today().isoformat()}*\n\n"
-                f"Perhatian warga, terdeteksi *{len(triggered_alerts)} saham* masuk radar risiko:\n"
-            )
-            send_message(chat_id, header_message)
-            for alert in sorted(triggered_alerts, key=lambda a: -a["score"]):
-                send_message(chat_id, alert["narration"])
-                time.sleep(1)  # Hindari Telegram API rate limit
+    # Kirim hasil ronda ke kanal/grup Telegram jika chat_id tersedia (Decoupled sink)
+    dispatch_telegram_alerts(triggered_alerts, chat_id=chat_id)
 
     # Simpan Run Manifest (Bukti otomasi terjadwal tanpa intervensi manusia)
     run_manifest = {

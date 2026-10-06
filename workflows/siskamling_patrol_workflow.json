@@ -1,0 +1,207 @@
+{
+  "updatedAt": "2026-10-06T02:15:42.920Z",
+  "createdAt": "2026-10-06T02:14:51.273Z",
+  "id": "pre1mfiVh6jFxix2",
+  "name": "Siskamling Pasar — Automated IDX Market Risk Patrol",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "start-trigger",
+      "name": "Test Patrol On-Demand",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        260
+      ]
+    },
+    {
+      "id": "schedule-trigger",
+      "name": "Daily Market Close (16:30 WIB)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        440
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 16 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "configuration",
+      "name": "Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        500,
+        340
+      ],
+      "notes": "Pusat kontrol parameter siskamling: atur threshold skor, jumlah top gainers, dan hari data tanpa koding.",
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "alert_threshold",
+              "name": "alert_threshold",
+              "value": 40,
+              "type": "number"
+            },
+            {
+              "id": "n_gainers",
+              "name": "n_gainers",
+              "value": 20,
+              "type": "number"
+            },
+            {
+              "id": "fetch_days",
+              "name": "fetch_days",
+              "value": 88,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "execute-patrol",
+      "name": "Run Siskamling Patrol",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        760,
+        340
+      ],
+      "notes": "Eksekusi runner patroli bot Python dengan output JSON manifest.",
+      "parameters": {
+        "command": "=/home/diwan/.hermes/tools/python-3.14.7+20240901-linux-x64/bin/python3 -m siskamling.bot --broadcast --threshold {{ $json.alert_threshold }} --n-gainers {{ $json.n_gainers }} --days {{ $json.fetch_days }} --json"
+      }
+    },
+    {
+      "id": "parse-manifest",
+      "name": "Parse Run Manifest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        340
+      ],
+      "notes": "Parsing hasil eksekusi manifest JSON dan format data ringkasan ronda.",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const raw = $json.stdout || \"{}\";\ntry {\n  const manifest = JSON.parse(raw);\n  return [{\n    json: {\n      status: manifest.n_alerts > 0 ? \"🚨 Alarm Bahaya Berbunyi\" : \"🛡️ Pasar Kondusif\",\n      run_id: manifest.run_id,\n      scanned: manifest.n_gainers_scanned,\n      alerts_count: manifest.n_alerts,\n      errors_count: manifest.n_errors,\n      alerts: manifest.alerts,\n      started_at: manifest.started_at,\n      finished_at: manifest.finished_at\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      status: \"⚠️ Error Parsing Output\",\n      raw_stdout: raw,\n      error: e.message\n    }\n  }];\n}"
+      }
+    },
+    {
+      "id": "sticky-documentation",
+      "name": "Documentation Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        200,
+        60
+      ],
+      "parameters": {
+        "content": "## 🏘️ Siskamling Pasar — IDX Radar Anti-Pom-Pom\n**Otomasi Patroli Sore Bursa Efek Indonesia (Track 2: Automation & Workflows)**\n\n### Cara Kerja\n1. **Trigger**: Berjalan otomatis tiap hari bursa pukul 16:30 WIB (atau klik tombol *Test Patrol On-Demand*).\n2. **Configuration**: Ubah parameter threshold skor risiko (default: 40) atau jumlah top gainers (default: 20) langsung dari satu kotak.\n3. **Run Patrol**: Python runner memindai top gainers, evaluasi 4 pilar teknikal deterministik, LLM persona Pak RT, lalu kirim alert ke Telegram.\n4. **Manifest**: Hasil tercatat rapi di run history dan folder .",
+        "height": 170,
+        "width": 700,
+        "color": 4
+      }
+    }
+  ],
+  "connections": {
+    "Test Patrol On-Demand": {
+      "main": [
+        [
+          {
+            "node": "Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Market Close (16:30 WIB)": {
+      "main": [
+        [
+          {
+            "node": "Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration": {
+      "main": [
+        [
+          {
+            "node": "Run Siskamling Patrol",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Siskamling Patrol": {
+      "main": [
+        [
+          {
+            "node": "Parse Run Manifest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Jakarta",
+    "executionTimeout": 900,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "staticData": null,
+  "meta": null,
+  "nodeGroups": [],
+  "pinData": null,
+  "versionId": "c4a25f71-30af-4b06-bc9f-12d2ef5afd63",
+  "activeVersionId": null,
+  "versionCounter": 3,
+  "triggerCount": 0,
+  "sourceWorkflowId": null,
+  "shared": [
+    {
+      "updatedAt": "2026-10-06T02:14:51.282Z",
+      "createdAt": "2026-10-06T02:14:51.282Z",
+      "role": "workflow:owner",
+      "workflowId": "pre1mfiVh6jFxix2",
+      "projectId": "xJ3JUZujs2P3WCyk",
+      "project": {
+        "updatedAt": "2026-08-14T02:38:28.115Z",
+        "createdAt": "2026-07-28T09:00:21.478Z",
+        "id": "xJ3JUZujs2P3WCyk",
+        "name": "Diwan Parker <arsyade09@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "81505b6c-2410-4ea4-b88a-c1dffe464234"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}
