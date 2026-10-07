@@ -1,8 +1,10 @@
-"""Unit tests untuk runner broadcast/briefing (orkestrasi & run manifest)."""
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from siskamling.bot import _extract_fundamental_metrics, execute_daily_broadcast, execute_morning_brief
 from siskamling.sectors import SectorsError

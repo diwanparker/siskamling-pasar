@@ -1,6 +1,9 @@
-"""Unit tests untuk transport WebSocket Discord Gateway (framing & intent)."""
 import socket
+import sys
 import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from siskamling.platforms.discord_gateway import (
     DiscordGateway,

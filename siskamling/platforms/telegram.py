@@ -126,7 +126,7 @@ class TelegramChannel(InteractiveChannel):
                         continue
 
                     reply_sender = self._create_reply_sender(chat_id)
-                    router.handle(text, ReplyContext(send=reply_sender, bold=self.bold))
+                    router.handle(text, ReplyContext(send=reply_sender, bold=self.bold, user_id=chat_id))
             except KeyboardInterrupt:
                 logger.info("Polling Telegram dihentikan oleh pengguna")
                 break

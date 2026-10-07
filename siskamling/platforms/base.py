@@ -32,6 +32,7 @@ class ReplyContext:
 
     send: Callable[[str], None]
     bold: Callable[[str], str]
+    user_id: str = ""
 
 
 class Channel(ABC):
@@ -107,6 +108,8 @@ class CommandRouter:
 
         if command == "ronda":
             self._handle_ronda(tokens, ctx)
+        elif command in {"aset", "portofolio", "watchlist"}:
+            self._handle_aset(tokens, text, ctx)
         elif command in {"start", "help"}:
             ctx.send(build_welcome_text(ctx.bold))
 
@@ -123,14 +126,65 @@ class CommandRouter:
         else:
             ctx.send(result["narration"])
 
+    def _handle_aset(self, tokens: list[str], full_text: str, ctx: ReplyContext) -> None:
+        user_id = ctx.user_id or "default"
+        from ..portfolio import add_ticker, clean_ticker, get_portfolio, remove_ticker, set_portfolio
+
+        if len(tokens) == 1:
+            current = get_portfolio(user_id)
+            if not current:
+                ctx.send(
+                    f"📭 {ctx.bold('Anda belum mendaftarkan saham portofolio ke pos ronda.')}\n\n"
+                    "Ketik contoh: `/aset BBRI, BBCA, TLKM` untuk mendaftarkan saham yang Anda miliki agar diawasi setiap hari."
+                )
+            else:
+                formatted = "\n".join(f"• {ctx.bold(s)}" for s in current)
+                ctx.send(
+                    f"📋 {ctx.bold('Saham Portofolio yang Sedang Diawasi:')}\n\n"
+                    f"{formatted}\n\n"
+                    "Gunakan `/aset tambah TICKER` untuk menambah atau `/aset hapus TICKER` untuk menghapus."
+                )
+            return
+
+        action = tokens[1].lower()
+        if action == "tambah" and len(tokens) >= 3:
+            sym = clean_ticker(tokens[2])
+            updated = add_ticker(user_id, tokens[2])
+            ctx.send(f"✅ Saham {ctx.bold(sym)} berhasil ditambahkan ke radar pantauan Anda!")
+            return
+        elif action == "hapus" and len(tokens) >= 3:
+            sym = clean_ticker(tokens[2])
+            remove_ticker(user_id, tokens[2])
+            ctx.send(f"🗑️ Saham {ctx.bold(sym)} telah dihapus dari radar pantauan Anda.")
+            return
+
+        # Anggap seluruh argumen setelah /aset adalah daftar ticker
+        raw_tickers = full_text.split(None, 1)[1] if len(tokens) > 1 else ""
+        raw_list = [item.strip() for item in raw_tickers.replace(",", " ").split() if item.strip()]
+        if not raw_list:
+            ctx.send("ℹ️ Format: `/aset BBRI, BBCA, TLKM`")
+            return
+
+        updated = set_portfolio(user_id, raw_list)
+        formatted = "\n".join(f"• {ctx.bold(s)}" for s in updated)
+        ctx.send(
+            f"✅ {ctx.bold(f'Berhasil mendaftarkan {len(updated)} saham portofolio:')}\n\n"
+            f"{formatted}\n\n"
+            "🛡️ Pos ronda akan otomatis mengawasi saham Anda setiap jadwal patroli harian!"
+        )
+
 
 def build_welcome_text(bold: Callable[[str], str]) -> str:
     return (
-        f"🏘️ {bold('Siskamling Pasar')}\n\n"
-        "Pos ronda otomatis untuk mendeteksi saham berisiko pom-pom di IDX.\n\n"
-        "• `/ronda TICKER` — Periksa skor risiko suatu saham (contoh: `/ronda BBCA`)\n"
-        "• Patroli sore otomatis setiap hari bursa jam 16:30 WIB.\n\n"
-        f"⚠️ {bold('Bukan saran investasi.')} Data publik bersumber dari Sectors.app."
+        f"🏘️ {bold('Siskamling Pasar — Radar Saham Anti-Pom-Pom')}\n\n"
+        "Pos ronda otomatis bursa IDX untuk mengawal saham portofolio Anda dan memindai potensi risiko pasar.\n\n"
+        f"📌 {bold('Perintah Warga:')}\n"
+        "• `/aset BBRI, BBCA, TLKM` — Daftarkan saham yang Anda miliki untuk diawasi rutin\n"
+        "• `/aset` — Lihat daftar saham portofolio Anda yang sedang dipantau\n"
+        "• `/aset tambah TICKER` / `/aset hapus TICKER` — Tambah atau hapus saham\n"
+        "• `/ronda TICKER` — Periksa skor risiko saham secara instan (contoh: `/ronda BBRI`)\n\n"
+        "🔔 Patroli harian otomatis berjalan tiap sore penutupan bursa (16:30 WIB) & pagi (08:30 WIB).\n\n"
+        f"⚠️ {bold('Bukan saran investasi.')} Data bersumber dari Sectors.app."
     )
 
 

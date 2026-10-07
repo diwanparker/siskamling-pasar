@@ -79,3 +79,32 @@ def ronda(ticker: str) -> dict[str, Any]:
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result
+
+
+class PortfolioUpdateRequest(BaseModel):
+    tickers: list[str]
+
+
+@app.get("/portfolio/{user_id}")
+def get_user_portfolio_endpoint(user_id: str) -> dict[str, Any]:
+    """Ambil daftar saham portofolio milik user."""
+    from .portfolio import get_portfolio
+    return {"user_id": user_id, "tickers": get_portfolio(user_id)}
+
+
+@app.post("/portfolio/{user_id}")
+def update_user_portfolio_endpoint(user_id: str, request: PortfolioUpdateRequest) -> dict[str, Any]:
+    """Perbarui daftar saham portofolio user."""
+    from .portfolio import set_portfolio
+    updated = set_portfolio(user_id, request.tickers)
+    return {"user_id": user_id, "tickers": updated}
+
+
+@app.get("/portfolio")
+def list_all_portfolios_endpoint() -> dict[str, Any]:
+    """Ringkasan seluruh portofolio pengguna yang terdaftar."""
+    from .portfolio import get_all_portfolios
+    data = get_all_portfolios()
+    unique = sorted({t for tickers in data.values() for t in tickers})
+    return {"total_users": len(data), "unique_stocks_count": len(unique), "stocks": unique}
+

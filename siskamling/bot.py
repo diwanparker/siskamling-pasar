@@ -189,12 +189,56 @@ def execute_daily_broadcast(
         # Tidak ada kanal terkonfigurasi → aman, tidak ada yang dikirim.
         dispatch_report(all_channels(), triggered_alerts)
 
-    run_manifest = _build_manifest(start_timestamp, len(gainer_items), triggered_alerts, encountered_errors, messages=messages)
+    # Evaluasi Portofolio Warga
+    from .portfolio import get_all_portfolios
+    user_portfolios = get_all_portfolios()
+    portfolio_alerts: dict[str, list[dict[str, Any]]] = {}
+    portfolio_stocks_scanned = 0
+
+    if user_portfolios:
+        unique_tickers = {t for tickers in user_portfolios.values() for t in tickers}
+        portfolio_stocks_scanned = len(unique_tickers)
+        ticker_scores: dict[str, dict[str, Any]] = {}
+        for ticker in unique_tickers:
+            scored = score_ticker(ticker, days=resolved_fetch_days)
+            if "error" not in scored and scored.get("score", 0) >= resolved_threshold:
+                ticker_scores[ticker] = scored
+
+        for user_id, user_tickers in user_portfolios.items():
+            user_hits = [ticker_scores[t] for t in user_tickers if t in ticker_scores]
+            if user_hits:
+                portfolio_alerts[user_id] = user_hits
+                if not dry_run:
+                    _dispatch_portfolio_alert(user_id, user_hits)
+
+    run_manifest = _build_manifest(
+        start_timestamp,
+        len(gainer_items),
+        triggered_alerts,
+        encountered_errors,
+        messages=messages,
+        portfolio_scanned=portfolio_stocks_scanned,
+        portfolio_alerts=portfolio_alerts,
+    )
     RUNS_DIRECTORY.mkdir(parents=True, exist_ok=True)
     manifest_path = RUNS_DIRECTORY / f"{date.today().isoformat()}.json"
     manifest_path.write_text(json.dumps(run_manifest, indent=2), encoding="utf-8")
     logger.info("Run manifest berhasil disimpan: %s", manifest_path)
     return run_manifest
+
+
+def _dispatch_portfolio_alert(user_id: str, alerts: list[dict[str, Any]]) -> None:
+    """Kirim peringatan risiko khusus untuk portofolio saham milik pengguna."""
+    for ch in all_channels():
+        if ch.name == "telegram" and ch.is_configured():
+            msg = (
+                f"🚨 *PERINGATAN POS RONDA: Aset Portofolio Anda*\n\n"
+                f"Terdeteksi *{len(alerts)} saham* dalam pantauan Anda menunjukkan sinyal risiko:\n\n"
+                + "\n".join(f"• *{a['symbol'].replace('.JK', '')}* — Skor Risiko: *{a['score']}/100*" for a in alerts)
+                + "\n\n"
+                + "\n\n".join(a.get("narration", "") for a in alerts)
+            )
+            ch.send(user_id, msg)
 
 
 from dataclasses import dataclass
@@ -216,6 +260,8 @@ def _build_manifest(
     triggered_alerts: list[dict[str, Any]],
     encountered_errors: list[str],
     messages: list[str],
+    portfolio_scanned: int = 0,
+    portfolio_alerts: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Susun run manifest (bukti otomasi terjadwal tanpa intervensi manusia)."""
     if isinstance(start_timestamp, ManifestData):
@@ -229,16 +275,22 @@ def _build_manifest(
         alerts = triggered_alerts or []
         errors = encountered_errors or []
 
+    ports = portfolio_alerts or {}
+    total_portfolio_alerts = sum(len(hits) for hits in ports.values())
+
     return {
         "run_id": hashlib.sha1(start_ts.encode()).hexdigest()[:12],
         "started_at": start_ts,
         "finished_at": datetime.now(timezone.utc).isoformat(),
-        "n_gainers_scanned": n_gainers_scanned,
-        "n_alerts": len(triggered_alerts),
-        "n_errors": len(encountered_errors),
-        "alerts": [{"symbol": alert["symbol"], "score": alert["score"]} for alert in triggered_alerts],
+        "n_gainers_scanned": scanned,
+        "n_alerts": len(alerts),
+        "n_errors": len(errors),
+        "portfolio_stocks_scanned": portfolio_scanned,
+        "portfolio_alerts_count": total_portfolio_alerts,
+        "portfolio_alerts": {u: [{"symbol": a["symbol"], "score": a["score"]} for a in hits] for u, hits in ports.items()},
+        "alerts": [{"symbol": alert["symbol"], "score": alert["score"]} for alert in alerts],
         "messages": messages,
-        "errors": encountered_errors[:10],
+        "errors": errors[:10],
     }
 
 

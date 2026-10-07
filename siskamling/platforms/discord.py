@@ -185,8 +185,10 @@ class DiscordChannel(InteractiveChannel):
             {"type": RESPONSE_DEFERRED_CHANNEL_MESSAGE},
         )
 
+        user_obj = interaction.get("member", {}).get("user") or interaction.get("user") or {}
+        user_id = str(user_obj.get("id", ""))
         interaction_sender = self._create_interaction_reply_sender(application_id, interaction_token)
-        router.handle(command_text, ReplyContext(send=interaction_sender, bold=self.bold))
+        router.handle(command_text, ReplyContext(send=interaction_sender, bold=self.bold, user_id=user_id))
 
     def _create_interaction_reply_sender(self, application_id: str, token: str) -> Callable[[str], Any]:
         """Buat fungsi pengirim balasan untuk Discord interaction response."""
@@ -208,8 +210,9 @@ class DiscordChannel(InteractiveChannel):
         if not text or not channel_id:
             return
 
+        author_id = str(author.get("id", ""))
         channel_sender = self._create_channel_reply_sender(channel_id)
-        router.handle(text, ReplyContext(send=channel_sender, bold=self.bold))
+        router.handle(text, ReplyContext(send=channel_sender, bold=self.bold, user_id=author_id))
 
     @staticmethod
     def _command_text(interaction: dict[str, Any]) -> str | None:

@@ -1,5 +1,8 @@
-"""Unit tests untuk modul siskamling.narrator (narasi deterministik)."""
+import sys
 import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from siskamling.narrator import build_alert_detail, narrate, risk_emoji
 

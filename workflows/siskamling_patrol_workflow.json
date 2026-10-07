@@ -172,7 +172,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const manifest = $json.manifest || $json;\nconst hasAlerts = (manifest.n_alerts ?? 0) > 0;\nreturn [{\n  json: {\n    status: hasAlerts ? \"🚨 Alarm Bahaya Berbunyi\" : \"🛡️ Pasar Kondusif\",\n    run_id: manifest.run_id,\n    scanned: manifest.n_gainers_scanned,\n    alerts_count: manifest.n_alerts,\n    errors_count: manifest.n_errors,\n    alerts: manifest.alerts,\n    started_at: manifest.started_at,\n    finished_at: manifest.finished_at\n  }\n}];"
+        "jsCode": "const manifest = $json.manifest || $json;\nconst hasAlerts = (manifest.n_alerts ?? 0) > 0 || (manifest.portfolio_alerts_count ?? 0) > 0;\nreturn [{\n  json: {\n    status: hasAlerts ? \"🚨 Alarm Bahaya Berbunyi\" : \"🛡️ Pasar Kondusif\",\n    run_id: manifest.run_id,\n    scanned: manifest.n_gainers_scanned,\n    alerts_count: manifest.n_alerts,\n    portfolio_scanned: manifest.portfolio_stocks_scanned ?? 0,\n    portfolio_alerts_count: manifest.portfolio_alerts_count ?? 0,\n    portfolio_alerts: manifest.portfolio_alerts ?? {},\n    errors_count: manifest.n_errors,\n    alerts: manifest.alerts,\n    started_at: manifest.started_at,\n    finished_at: manifest.finished_at\n  }\n}];"
       }
     },
     {

@@ -1,8 +1,12 @@
 """Unit tests untuk abstraksi platform (registry, dispatch, router) dan kanal Telegram/Discord."""
 import json
 import os
+import sys
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from siskamling.platforms.base import (
     Channel,
@@ -120,6 +124,33 @@ class TestCommandRouter(unittest.TestCase):
         router = CommandRouter(evaluate=lambda ticker: {"symbol": ticker, "score": 1, "narration": "ok"})
         router.handle("/ronda@SiskamlingBot bbca", make_context(sent))
         self.assertEqual(sent[1], "ok")
+
+    @patch("siskamling.portfolio.PORTFOLIO_FILE")
+    def test_aset_empty_prompts_user(self, mock_file):
+        mock_file.exists.return_value = False
+        sent: list[str] = []
+        CommandRouter(evaluate=lambda t: {}).handle("/aset", make_context(sent))
+        self.assertIn("belum mendaftarkan saham", sent[0])
+
+    @patch("siskamling.portfolio.PORTFOLIO_FILE")
+    def test_aset_register_and_list(self, mock_file):
+        mock_file.exists.return_value = False
+        sent: list[str] = []
+        router = CommandRouter(evaluate=lambda t: {})
+        with patch("siskamling.portfolio._save_data"):
+            with patch("siskamling.portfolio._load_data", return_value={"u1": ["BBCA.JK", "BBRI.JK"]}):
+                ctx = ReplyContext(send=sent.append, bold=lambda t: f"**{t}**", user_id="u1")
+                router.handle("/aset", ctx)
+                self.assertIn("BBCA.JK", sent[-1])
+                self.assertIn("BBRI.JK", sent[-1])
+
+    @patch("siskamling.portfolio.set_portfolio", return_value=["BBCA.JK", "TLKM.JK"])
+    def test_aset_set_multiple_tickers(self, mock_set):
+        sent: list[str] = []
+        ctx = ReplyContext(send=sent.append, bold=lambda t: f"**{t}**", user_id="u2")
+        CommandRouter(evaluate=lambda t: {}).handle("/aset BBCA, TLKM", ctx)
+        self.assertIn("Berhasil mendaftarkan 2 saham", sent[0])
+        mock_set.assert_called_once_with("u2", ["BBCA", "TLKM"])
 
 
 class TestTelegramChannel(unittest.TestCase):
@@ -253,4 +284,7 @@ class TestPlainTextChannel(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    unittest.main()
+
+if __name__ == '__main__':
     unittest.main()
