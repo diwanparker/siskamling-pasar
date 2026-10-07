@@ -297,6 +297,13 @@ def _finalize_run(pipeline: str, manifest: dict[str, Any], trigger: str, dry_run
     return manifest
 
 
+def _channel_recipient(channel: Any) -> str:
+    """Ambil default_recipient secara aman (bisa menangani mock/string dalam unit test)."""
+    if hasattr(channel, "default_recipient") and callable(channel.default_recipient):
+        return str(channel.default_recipient() or "")
+    return str(channel or "")
+
+
 def execute_daily_broadcast(
     threshold: int | None = None,
     n_gainers: int | None = None,
@@ -389,7 +396,7 @@ def execute_daily_broadcast(
         # Fan-out ke kanal notifikasi yang belum menerima laporan terpadu per-user
         broadcast_channels = [
             ch for ch in all_channels()
-            if ch.default_recipient() not in handled_recipients
+            if _channel_recipient(ch) not in handled_recipients
         ]
         if broadcast_channels:
             dispatch_report(broadcast_channels, triggered_alerts)
@@ -660,7 +667,7 @@ def execute_morning_brief(
         # Fan-out ke kanal notifikasi yang belum menerima laporan terpadu per-user
         broadcast_channels = [
             ch for ch in all_channels()
-            if ch.default_recipient() not in handled_recipients
+            if _channel_recipient(ch) not in handled_recipients
         ]
         if broadcast_channels:
             dispatch_briefing(broadcast_channels, selected)
