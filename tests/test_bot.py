@@ -149,6 +149,121 @@ class TestDryRun(unittest.TestCase):
         self.assertTrue(any("kondusif" in message for message in manifest["messages"]))
 
 
+class TestWatchlistPatrol(unittest.TestCase):
+    @patch("siskamling.bot.dispatch_direct")
+    @patch("siskamling.bot.dispatch_report")
+    @patch("siskamling.bot.all_channels", return_value=["chan"])
+    @patch("siskamling.bot.score_ticker")
+    @patch("siskamling.bot.sectors.get")
+    @patch("siskamling.bot.get_all_portfolios")
+    def test_sends_each_watchlist_to_its_platform(
+        self, mock_portfolios, mock_get, mock_score, _mock_channels, mock_dispatch_report, mock_direct
+    ):
+        mock_get.return_value = {"top_gainers": {"1d": [{"symbol": "AAA.JK"}]}}
+        mock_portfolios.return_value = {"telegram:111": ["BBCA.JK"]}
+        mock_score.return_value = {"symbol": "X.JK", "score": 80, "narration": "x"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("siskamling.bot.RUNS_DIRECTORY", Path(tmp)):
+                execute_daily_broadcast(threshold=40)
+
+        self.assertEqual(mock_direct.call_count, 1)
+        args, kwargs = mock_direct.call_args
+        self.assertEqual(args[1], "111")
+        self.assertEqual(kwargs["platform"], "telegram")
+
+    @patch("siskamling.bot.dispatch_direct")
+    @patch("siskamling.bot.dispatch_report")
+    @patch("siskamling.bot.all_channels", return_value=["chan"])
+    @patch("siskamling.bot.score_ticker")
+    @patch("siskamling.bot.sectors.get")
+    @patch("siskamling.bot.get_all_portfolios")
+    def test_includes_low_score_assets(
+        self, mock_portfolios, mock_get, mock_score, _mock_channels, mock_dispatch_report, mock_direct
+    ):
+        mock_get.return_value = {"top_gainers": {"1d": [{"symbol": "AAA.JK"}]}}
+        mock_portfolios.return_value = {"telegram:111": ["BBCA.JK"]}
+        mock_score.return_value = {"symbol": "X.JK", "score": 5, "narration": "tenang"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("siskamling.bot.RUNS_DIRECTORY", Path(tmp)):
+                manifest = execute_daily_broadcast(threshold=40)
+
+        self.assertEqual(mock_direct.call_count, 1)  # aset tetap dikirim walau skornya rendah
+        self.assertEqual(manifest["portfolio_stocks_scanned"], 1)
+        self.assertEqual(manifest["portfolio_alerts_count"], 0)
+
+    @patch("siskamling.bot.dispatch_direct")
+    @patch("siskamling.bot.dispatch_report")
+    @patch("siskamling.bot.all_channels", return_value=["chan"])
+    @patch("siskamling.bot.score_ticker")
+    @patch("siskamling.bot.sectors.get")
+    @patch("siskamling.bot.get_all_portfolios")
+    def test_dry_run_skips_watchlist_delivery(
+        self, mock_portfolios, mock_get, mock_score, _mock_channels, mock_dispatch_report, mock_direct
+    ):
+        mock_get.return_value = {"top_gainers": {"1d": [{"symbol": "AAA.JK"}]}}
+        mock_portfolios.return_value = {"telegram:111": ["BBCA.JK"]}
+        mock_score.return_value = {"symbol": "X.JK", "score": 80, "narration": "x"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("siskamling.bot.RUNS_DIRECTORY", Path(tmp)):
+                execute_daily_broadcast(threshold=40, dry_run=True)
+
+        mock_direct.assert_not_called()
+
+
+class TestWatchlistBriefing(unittest.TestCase):
+    def _report(self, *, market_cap=1e12, forward_pe=10.0, dividend_yield=0.06, earnings=1e11):
+        return {
+            "company_name": "Bank Contoh",
+            "overview": {"sector": "Banks", "market_cap": market_cap},
+            "valuation": {"forward_pe": forward_pe},
+            "dividend": {"yield_ttm": dividend_yield},
+            "financials": {"historical_financials": [{"year": 2024, "earnings": earnings}]},
+        }
+
+    @patch("siskamling.bot.dispatch_direct")
+    @patch("siskamling.bot.dispatch_briefing")
+    @patch("siskamling.bot.all_channels", return_value=["chan"])
+    @patch("siskamling.bot.sectors.company_report")
+    @patch("siskamling.bot.sectors.screener")
+    @patch("siskamling.bot.get_all_portfolios")
+    def test_sends_watchlist_fundamentals(
+        self, mock_portfolios, mock_screener, mock_report, _mock_channels, _mock_briefing, mock_direct
+    ):
+        mock_screener.return_value = [{"symbol": "AAA.JK"}]
+        mock_portfolios.return_value = {"telegram:111": ["BBCA.JK"]}
+        mock_report.return_value = self._report()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("siskamling.bot.RUNS_DIRECTORY", Path(tmp)):
+                manifest = execute_morning_brief()
+
+        self.assertEqual(manifest["portfolio_stocks_scanned"], 1)
+        self.assertEqual(mock_direct.call_count, 1)
+        self.assertEqual(mock_direct.call_args.args[1], "111")
+
+    @patch("siskamling.bot.dispatch_direct")
+    @patch("siskamling.bot.dispatch_briefing")
+    @patch("siskamling.bot.all_channels", return_value=["chan"])
+    @patch("siskamling.bot.sectors.company_report")
+    @patch("siskamling.bot.sectors.screener")
+    @patch("siskamling.bot.get_all_portfolios", return_value={})
+    def test_no_watchlist_skips(
+        self, _mock_portfolios, mock_screener, mock_report, _mock_channels, _mock_briefing, mock_direct
+    ):
+        mock_screener.return_value = [{"symbol": "AAA.JK"}]
+        mock_report.return_value = self._report()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("siskamling.bot.RUNS_DIRECTORY", Path(tmp)):
+                manifest = execute_morning_brief()
+
+        mock_direct.assert_not_called()
+        self.assertEqual(manifest["portfolio_stocks_scanned"], 0)
+
+
 class TestFundamentalMetrics(unittest.TestCase):
     def test_picks_latest_year_earnings(self):
         report = {"financials": {"historical_financials": [{"year": 2023, "earnings": 1}, {"year": 2025, "earnings": 9}]}}

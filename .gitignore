@@ -2,6 +2,7 @@
 *.env
 !.env.example
 data/cache/
+data/portofolio.json
 data/test_*.txt
 runs/
 *.log

@@ -26,6 +26,24 @@ def clean_ticker(ticker: str) -> str:
     return f"{cleaned}.JK"
 
 
+def scope_user_key(platform: str, user_id: str) -> str:
+    """Bentuk kunci penyimpanan ber-prefiks platform (mis. "telegram:12345").
+
+    Prefiks diperlukan agar broadcast per-user tahu kanal mana yang harus dipakai.
+    Bila `platform` kosong, kunci dibiarkan apa adanya (kompatibel dengan data lama).
+    """
+    normalized_id = str(user_id or "default")
+    return f"{platform}:{normalized_id}" if platform else normalized_id
+
+
+def parse_user_key(user_key: str) -> tuple[str, str]:
+    """Pisahkan kunci portofolio menjadi (platform, user_id); platform kosong bila tanpa prefiks."""
+    platform, separator, user_id = str(user_key).partition(":")
+    if not separator:
+        return "", platform
+    return platform, user_id
+
+
 def _load_data() -> dict[str, list[str]]:
     if not PORTFOLIO_FILE.exists():
         return {}

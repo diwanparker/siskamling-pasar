@@ -28,11 +28,14 @@ class ReplyContext:
     Atribut:
         send: Kirim satu pesan balasan ke pengirim asal.
         bold: Bungkus teks dengan markup tebal milik platform.
+        user_id: Identitas pengirim di platform asal (chat id / user id).
+        platform: Nama kanal pengirim (mis. "telegram", "discord") untuk routing pesan langsung.
     """
 
     send: Callable[[str], None]
     bold: Callable[[str], str]
     user_id: str = ""
+    platform: str = ""
 
 
 class Channel(ABC):
@@ -55,6 +58,14 @@ class Channel(ABC):
     @abstractmethod
     def bold(self, text: str) -> str:
         """Bungkus teks dengan markup tebal milik platform."""
+
+    def send_to_user(self, user_id: str, text: str) -> Any:
+        """Kirim pesan langsung ke seorang pengguna (bawaan: id diperlakukan sebagai recipient).
+
+        Platform yang tidak bisa mengirim ke user id mentah (mis. Discord, yang
+        butuh membuka DM channel lebih dulu) menimpa metode ini.
+        """
+        return self.send(user_id, text)
 
 
 class PlainTextChannel(Channel):
@@ -137,8 +148,16 @@ class CommandRouter:
             ctx.send(result["narration"])
 
     def _handle_aset(self, tokens: list[str], full_text: str, ctx: ReplyContext) -> None:
-        user_id = ctx.user_id or "default"
-        from ..portfolio import add_ticker, clean_ticker, get_portfolio, remove_ticker, set_portfolio
+        from ..portfolio import (
+            add_ticker,
+            clean_ticker,
+            get_portfolio,
+            remove_ticker,
+            scope_user_key,
+            set_portfolio,
+        )
+
+        user_id = scope_user_key(ctx.platform, ctx.user_id or "default")
 
         if len(tokens) == 1:
             current = get_portfolio(user_id)
@@ -297,6 +316,30 @@ def build_briefing_messages(channel: Channel, candidates: list[dict[str, Any]]) 
     return chunks
 
 
+def build_portfolio_messages(
+    channel: Channel,
+    items: list[dict[str, Any]],
+    title: str,
+    summary: Callable[[dict[str, Any]], str],
+) -> list[str]:
+    """Susun section aset pantauan warga (per-user) memakai markup tebal kanal.
+
+    `items` masing-masing memuat `symbol` dan opsional `narration`; `summary`
+    merangkum satu item menjadi baris singkat pada papan skor.
+    """
+    if not items:
+        return []
+
+    bold = channel.bold
+    scoreboard = "\n".join(
+        f"{rank}. {bold(item['symbol'].replace('.JK', ''))} — {summary(item)}"
+        for rank, item in enumerate(items, start=1)
+    )
+    messages = [f"📌 {bold(title)}\n\n{scoreboard}"]
+    messages.extend(item["narration"] for item in items if item.get("narration"))
+    return messages
+
+
 def dispatch(channels: Iterable[Channel], build_messages: Callable[[Channel], list[str]]) -> None:
     """Siarkan kumpulan pesan (dibangun per-kanal) ke seluruh kanal terkonfigurasi."""
     for channel in channels:
@@ -319,6 +362,36 @@ def dispatch_report(channels: Iterable[Channel], triggered_alerts: list[dict[str
 def dispatch_briefing(channels: Iterable[Channel], candidates: list[dict[str, Any]]) -> None:
     """Siarkan briefing pagi ke seluruh kanal yang terkonfigurasi (fan-out)."""
     dispatch(channels, lambda channel: build_briefing_messages(channel, candidates))
+
+
+# Kunci portofolio lama tanpa prefiks platform diasumsikan milik Telegram.
+DEFAULT_DIRECT_PLATFORM = "telegram"
+
+
+def dispatch_direct(
+    channels: Iterable[Channel],
+    recipient: str,
+    build_messages: Callable[[Channel], list[str]],
+    platform: str = "",
+) -> None:
+    """Kirim pesan langsung ke satu penerima (mis. DM aset warga) pada kanal yang cocok.
+
+    `platform` adalah nama kanal tujuan (mis. "telegram", "discord"). Bila kosong,
+    pesan dikirim melalui `DEFAULT_DIRECT_PLATFORM` agar data lama tetap terkirim.
+    """
+    if not recipient:
+        return
+
+    target = platform or DEFAULT_DIRECT_PLATFORM
+    for channel in channels:
+        if not channel.is_configured() or channel.name != target:
+            continue
+
+        messages = build_messages(channel)
+        for index, message in enumerate(messages):
+            channel.send_to_user(recipient, message)
+            if index < len(messages) - 1:
+                time.sleep(1)  # jeda antar-pesan untuk menghindari rate limit
 
 
 def run_listeners(channels: Iterable[Channel], router: CommandRouter) -> None:

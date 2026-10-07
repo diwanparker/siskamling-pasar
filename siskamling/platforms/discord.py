@@ -114,6 +114,15 @@ class DiscordChannel(InteractiveChannel):
             response = self.request("POST", f"/channels/{recipient}/messages", {"content": chunk})
         return response
 
+    def send_to_user(self, user_id: str, text: str) -> Any | None:
+        """Kirim DM ke seorang pengguna: buka channel DM lebih dulu, lalu kirim pesan."""
+        dm_channel = self.request("POST", "/users/@me/channels", {"recipient_id": user_id})
+        channel_id = str((dm_channel or {}).get("id", ""))
+        if not channel_id:
+            logger.warning("Gagal membuka DM channel Discord untuk user %s", user_id)
+            return None
+        return self.send(channel_id, text)
+
     def register_commands(self, application_id: str) -> Any | None:
         """Daftarkan slash command global, atau per-guild bila DISCORD_GUILD_ID di-set."""
         path = f"/applications/{application_id}/commands"
@@ -188,7 +197,7 @@ class DiscordChannel(InteractiveChannel):
         user_obj = interaction.get("member", {}).get("user") or interaction.get("user") or {}
         user_id = str(user_obj.get("id", ""))
         interaction_sender = self._create_interaction_reply_sender(application_id, interaction_token)
-        router.handle(command_text, ReplyContext(send=interaction_sender, bold=self.bold, user_id=user_id))
+        router.handle(command_text, ReplyContext(send=interaction_sender, bold=self.bold, user_id=user_id, platform=self.name))
 
     def _create_interaction_reply_sender(self, application_id: str, token: str) -> Callable[[str], Any]:
         """Buat fungsi pengirim balasan untuk Discord interaction response."""
@@ -212,7 +221,7 @@ class DiscordChannel(InteractiveChannel):
 
         author_id = str(author.get("id", ""))
         channel_sender = self._create_channel_reply_sender(channel_id)
-        router.handle(text, ReplyContext(send=channel_sender, bold=self.bold, user_id=author_id))
+        router.handle(text, ReplyContext(send=channel_sender, bold=self.bold, user_id=author_id, platform=self.name))
 
     @staticmethod
     def _command_text(interaction: dict[str, Any]) -> str | None:

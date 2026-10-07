@@ -14,7 +14,9 @@ from siskamling.platforms.base import (
     PlainTextChannel,
     ReplyContext,
     build_briefing_messages,
+    build_portfolio_messages,
     build_report_messages,
+    dispatch_direct,
     dispatch_report,
 )
 from siskamling.platforms.discord import DiscordChannel, chunk_message
@@ -92,6 +94,71 @@ class TestDispatchReport(unittest.TestCase):
         self.assertIn("narasi", header)
 
 
+class TestBuildPortfolioMessages(unittest.TestCase):
+    def test_renders_header_entries_and_narrations(self):
+        items = [
+            {"symbol": "BBCA.JK", "score": 30, "narration": "narasi-bbca"},
+            {"symbol": "BBRI.JK", "score": 75, "narration": "narasi-bbri"},
+        ]
+        messages = build_portfolio_messages(
+            RecordingChannel(), items, "Radar Aset Anda", lambda item: f"Skor {item['score']}/100"
+        )
+
+        self.assertEqual(len(messages), 3)
+        self.assertIn("Radar Aset Anda", messages[0])
+        self.assertIn("**BBCA**", messages[0])
+        self.assertIn("Skor 75/100", messages[0])
+        self.assertEqual(messages[1], "narasi-bbca")
+        self.assertEqual(messages[2], "narasi-bbri")
+
+    def test_empty_items_returns_no_message(self):
+        self.assertEqual(build_portfolio_messages(RecordingChannel(), [], "t", lambda item: ""), [])
+
+
+class TestDispatchDirect(unittest.TestCase):
+    @patch("siskamling.platforms.base.time.sleep")
+    def test_routes_only_to_matching_platform(self, _mock_sleep):
+        telegram = RecordingChannel()
+        telegram.name = "telegram"
+        discord = RecordingChannel()
+        discord.name = "discord"
+
+        dispatch_direct([telegram, discord], "111", lambda channel: ["halo"], platform="discord")
+
+        self.assertEqual(telegram.sent, [])
+        self.assertEqual(discord.sent, [("111", "halo")])
+
+    @patch("siskamling.platforms.base.time.sleep")
+    def test_unprefixed_recipient_defaults_to_telegram(self, _mock_sleep):
+        telegram = RecordingChannel()
+        telegram.name = "telegram"
+        discord = RecordingChannel()
+        discord.name = "discord"
+
+        dispatch_direct([telegram, discord], "222", lambda channel: ["halo"])
+
+        self.assertEqual(telegram.sent, [("222", "halo")])
+        self.assertEqual(discord.sent, [])
+
+    @patch("siskamling.platforms.base.time.sleep")
+    def test_empty_recipient_skips(self, _mock_sleep):
+        channel = RecordingChannel()
+        channel.name = "telegram"
+
+        dispatch_direct([channel], "", lambda ch: ["halo"], platform="telegram")
+
+        self.assertEqual(channel.sent, [])
+
+    @patch("siskamling.platforms.base.time.sleep")
+    def test_skips_unconfigured_channel(self, _mock_sleep):
+        channel = RecordingChannel(configured=False)
+        channel.name = "telegram"
+
+        dispatch_direct([channel], "111", lambda ch: ["halo"], platform="telegram")
+
+        self.assertEqual(channel.sent, [])
+
+
 class TestCommandRouter(unittest.TestCase):
     def test_ronda_success(self):
         sent: list[str] = []
@@ -166,6 +233,12 @@ class TestCommandRouter(unittest.TestCase):
         router = CommandRouter(evaluate=lambda t: {})
         router.handle("/aset tambah", make_context(sent))
         self.assertIn("Format perintah", sent[0])
+    @patch("siskamling.portfolio.set_portfolio", return_value=["BBCA.JK"])
+    def test_aset_scopes_key_by_platform(self, mock_set):
+        sent: list[str] = []
+        ctx = ReplyContext(send=sent.append, bold=lambda t: f"**{t}**", user_id="42", platform="telegram")
+        CommandRouter(evaluate=lambda t: {}).handle("/aset BBCA", ctx)
+        mock_set.assert_called_once_with("telegram:42", ["BBCA"])
 
 
 class TestTelegramChannel(unittest.TestCase):
@@ -215,6 +288,26 @@ class TestDiscordChannel(unittest.TestCase):
         for call in mock_request.call_args_list:
             self.assertEqual(call.args[0], "POST")
             self.assertLessEqual(len(call.args[2]["content"]), 2000)
+
+    @patch.object(DiscordChannel, "request")
+    def test_send_to_user_opens_dm_channel(self, mock_request):
+        mock_request.side_effect = [{"id": "dm-chan"}, {}]
+
+        DiscordChannel().send_to_user("111", "halo")
+
+        self.assertEqual(
+            mock_request.call_args_list[0].args,
+            ("POST", "/users/@me/channels", {"recipient_id": "111"}),
+        )
+        self.assertEqual(
+            mock_request.call_args_list[1].args,
+            ("POST", "/channels/dm-chan/messages", {"content": "halo"}),
+        )
+
+    @patch.object(DiscordChannel, "request", return_value=None)
+    def test_send_to_user_without_dm_channel_returns_none(self, mock_request):
+        self.assertIsNone(DiscordChannel().send_to_user("111", "halo"))
+        mock_request.assert_called_once_with("POST", "/users/@me/channels", {"recipient_id": "111"})
 
     @patch.object(DiscordChannel, "request", return_value={})
     def test_interaction_defers_then_edits_original(self, mock_request):
