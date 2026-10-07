@@ -136,7 +136,7 @@ class TestDryRun(unittest.TestCase):
 
         mock_dispatch.assert_not_called()
         self.assertTrue(any("AAA" in message for message in manifest["messages"]))
-        self.assertIn("bahaya", manifest["messages"])
+        self.assertTrue(any("bahaya" in message for message in manifest["messages"]))
 
     @patch("siskamling.bot.dispatch_report")
     @patch("siskamling.bot.sectors.get")

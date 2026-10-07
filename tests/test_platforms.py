@@ -62,10 +62,11 @@ class TestReportBuilder(unittest.TestCase):
             {"symbol": "HIGH.JK", "score": 90, "narration": "high"},
         ]
         messages = build_report_messages(RecordingChannel(), alerts)
-        self.assertEqual(len(messages), 3)  # header + 2 alert
+        self.assertEqual(len(messages), 1)
         self.assertIn("2 saham", messages[0])
-        self.assertEqual(messages[1], "high")
-        self.assertEqual(messages[2], "low")
+        self.assertIn("high", messages[0])
+        self.assertIn("low", messages[0])
+        self.assertTrue(messages[0].index("high") < messages[0].index("low"))
 
 
 class TestDispatchReport(unittest.TestCase):
@@ -88,7 +89,7 @@ class TestDispatchReport(unittest.TestCase):
 
         header = channel.sent[0][1]
         self.assertIn("**Laporan Ronda Sore", header)
-        self.assertEqual(channel.sent[1], ("dest", "narasi"))
+        self.assertIn("narasi", header)
 
 
 class TestCommandRouter(unittest.TestCase):
@@ -273,11 +274,12 @@ class TestBriefingBuilder(unittest.TestCase):
             {"symbol": "HIGH.JK", "dividend_yield": 0.09, "narration": "high"},
         ]
         messages = build_briefing_messages(RecordingChannel(), candidates)
-        self.assertEqual(len(messages), 4)  # header + 2 kandidat + disclaimer
+        self.assertEqual(len(messages), 1)
         self.assertIn("2 saham", messages[0])
-        self.assertEqual(messages[1], "high")
-        self.assertEqual(messages[2], "low")
-        self.assertIn("bukan saran investasi", messages[-1])
+        self.assertIn("high", messages[0])
+        self.assertIn("low", messages[0])
+        self.assertTrue(messages[0].index("high") < messages[0].index("low"))
+        self.assertIn("bukan saran investasi", messages[0])
 
 
 class TestPlainTextChannel(unittest.TestCase):

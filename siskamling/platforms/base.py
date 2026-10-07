@@ -205,7 +205,7 @@ def build_welcome_text(bold: Callable[[str], str]) -> str:
 
 
 def build_report_messages(channel: Channel, triggered_alerts: list[dict[str, Any]]) -> list[str]:
-    """Susun laporan ronda memakai markup tebal milik kanal."""
+    """Susun laporan ronda memakai markup tebal milik kanal menjadi 1 pesan/bubble terpadu."""
     bold = channel.bold
 
     if not triggered_alerts:
@@ -219,17 +219,43 @@ def build_report_messages(channel: Channel, triggered_alerts: list[dict[str, Any
         f"{rank}. {bold(alert['symbol'].replace('.JK', ''))} — {alert['score']}/100"
         for rank, alert in enumerate(ranked, start=1)
     )
-    messages = [
+    header = (
         f"🔔 {bold(f'Laporan Ronda Sore — {date.today().isoformat()}')}\n\n"
         f"Perhatian warga, terdeteksi {bold(f'{len(ranked)} saham')} masuk radar risiko:\n\n"
         f"{scoreboard}"
-    ]
-    messages.extend(alert["narration"] for alert in ranked)
-    return messages
+    )
+
+    clean_narrations = []
+    for alert in ranked:
+        narration = alert.get("narration", "").strip()
+        # Bersihkan disclaimer per saham agar tidak terulang-ulang
+        narration = narration.replace("⚠️ Ini bukan saran investasi. Data dari Sectors.app.", "").strip()
+        clean_narrations.append(narration)
+
+    divider = "\n\n───────────────────\n\n"
+    disclaimer = "\n\n⚠️ Ini bukan saran investasi. Data dari Sectors.app."
+
+    combined = f"{header}{divider}{divider.join(clean_narrations)}{disclaimer}"
+    if len(combined) <= 3900:
+        return [combined]
+
+    # Pemecahan cerdas jika daftar saham sangat panjang (> 15 saham) melebihi batas 1 bubble
+    chunks = []
+    current_chunk = header
+    for item in clean_narrations:
+        candidate = f"{current_chunk}{divider}{item}"
+        if len(candidate) > 3800:
+            chunks.append(current_chunk)
+            current_chunk = item
+        else:
+            current_chunk = candidate
+    if current_chunk:
+        chunks.append(current_chunk + disclaimer)
+    return chunks
 
 
 def build_briefing_messages(channel: Channel, candidates: list[dict[str, Any]]) -> list[str]:
-    """Susun briefing pagi (kandidat fundamental) memakai markup tebal milik kanal."""
+    """Susun briefing pagi (kandidat fundamental) menjadi 1 pesan/bubble terpadu."""
     bold = channel.bold
 
     if not candidates:
@@ -244,13 +270,31 @@ def build_briefing_messages(channel: Channel, candidates: list[dict[str, Any]]) 
         f"{(item.get('dividend_yield') or 0) * 100:.1f}%"
         for rank, item in enumerate(ranked, start=1)
     )
-    messages = [
+    header = (
         f"🌅 {bold(f'Briefing Pagi — {date.today().isoformat()}')}\n\n"
         f"Kandidat fundamental sehat ({bold(f'{len(ranked)} saham')}):\n\n{scoreboard}"
-    ]
-    messages.extend(item["narration"] for item in ranked)
-    messages.append("⚠️ Ini bukan saran investasi. Data dari Sectors.app.")
-    return messages
+    )
+
+    clean_narrations = [item.get("narration", "").strip() for item in ranked]
+    divider = "\n\n───────────────────\n\n"
+    disclaimer = "\n\n⚠️ Ini bukan saran investasi. Data dari Sectors.app."
+
+    combined = f"{header}{divider}{divider.join(clean_narrations)}{disclaimer}"
+    if len(combined) <= 3900:
+        return [combined]
+
+    chunks = []
+    current_chunk = header
+    for item in clean_narrations:
+        candidate = f"{current_chunk}{divider}{item}"
+        if len(candidate) > 3800:
+            chunks.append(current_chunk)
+            current_chunk = item
+        else:
+            current_chunk = candidate
+    if current_chunk:
+        chunks.append(current_chunk + disclaimer)
+    return chunks
 
 
 def dispatch(channels: Iterable[Channel], build_messages: Callable[[Channel], list[str]]) -> None:
