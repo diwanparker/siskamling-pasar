@@ -107,21 +107,24 @@ Dijalankan dengan `python3 -m siskamling.bot --serve` (setara `uvicorn siskamlin
 | `POST` | `/morning-brief`  | Jalankan briefing pagi + broadcast, kembalikan manifest           |
 | `GET`  | `/ronda/{ticker}` | Hitung skor risiko satu saham                                     |
 
+Endpoint **tidak terikat pada Telegram/Discord**. Setiap respons selalu memuat `messages` — narasi teks polos siap baca — jadi bisa di-curl **tanpa kredensial kanal apa pun**. Tambahkan `"dry_run": true` untuk memastikan tidak ada pesan yang dikirim ke kanal.
+
 Body request opsional (kosong = pakai default/env):
 
 ```bash
-# Patroli risiko
-curl -X POST http://localhost:8000/patrol \
+# Patroli risiko — cukup tampilkan narasi, tanpa kirim ke kanal
+curl -X POST 'http://localhost:8000/patrol' \
   -H "Content-Type: application/json" \
-  -d '{"threshold": 40, "n_gainers": 20, "fetch_days": 88}'
+  -d '{"dry_run": true, "n_gainers": 20}'
+# → {"n_alerts": 3, "messages": ["🔔 Laporan Ronda Sore — ...", "🚨 BBCA — ...", ...], ...}
 
 # Briefing pagi
-curl -X POST http://localhost:8000/morning-brief \
+curl -X POST 'http://localhost:8000/morning-brief' \
   -H "Content-Type: application/json" \
-  -d '{"n_candidates": 3, "max_pe": 20, "min_dividend_yield": 5}'
+  -d '{"dry_run": true, "n_candidates": 3, "max_pe": 20, "min_dividend_yield": 5}'
 
-# Skor satu saham
-curl http://localhost:8000/ronda/BBCA
+# Skor satu saham (respons memuat "narration")
+curl 'http://localhost:8000/ronda/BBCA'
 ```
 
 Dokumentasi interaktif tersedia di `http://localhost:8000/docs`.

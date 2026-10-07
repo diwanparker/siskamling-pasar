@@ -1,9 +1,9 @@
 {
-  "updatedAt": "2026-10-06T02:15:42.920Z",
+  "updatedAt": "2026-10-07T05:00:00.000Z",
   "createdAt": "2026-10-06T02:14:51.273Z",
   "id": "pre1mfiVh6jFxix2",
   "name": "Siskamling Pasar — Automated IDX Market Risk Patrol",
-  "description": null,
+  "description": "Dual pipeline via HTTP API: Morning Brief (08:30 WIB) + Post-Market Radar Anti-Pom-Pom (16:30 WIB).",
   "active": false,
   "isArchived": false,
   "nodes": [
@@ -38,6 +38,26 @@
       }
     },
     {
+      "id": "schedule-morning",
+      "name": "Morning Brief (08:30 WIB)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        620
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 8 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
       "id": "configuration",
       "name": "Configuration",
       "type": "n8n-nodes-base.set",
@@ -46,10 +66,16 @@
         500,
         340
       ],
-      "notes": "Pusat kontrol parameter siskamling: atur threshold skor, jumlah top gainers, dan hari data tanpa koding.",
+      "notes": "Pusat kontrol parameter patroli sore: base URL API, threshold skor, jumlah top gainers, dan hari data.",
       "parameters": {
         "assignments": {
           "assignments": [
+            {
+              "id": "api_base_url",
+              "name": "api_base_url",
+              "value": "http://localhost:8000",
+              "type": "string"
+            },
             {
               "id": "alert_threshold",
               "name": "alert_threshold",
@@ -74,17 +100,87 @@
       }
     },
     {
+      "id": "configuration-morning",
+      "name": "Configuration Morning Brief",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        500,
+        620
+      ],
+      "notes": "Pusat kontrol parameter briefing pagi: base URL API, jumlah kandidat, batas PE, dan yield minimal.",
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "api_base_url",
+              "name": "api_base_url",
+              "value": "http://localhost:8000",
+              "type": "string"
+            },
+            {
+              "id": "n_candidates",
+              "name": "n_candidates",
+              "value": 3,
+              "type": "number"
+            },
+            {
+              "id": "max_pe",
+              "name": "max_pe",
+              "value": 20,
+              "type": "number"
+            },
+            {
+              "id": "min_dividend_yield",
+              "name": "min_dividend_yield",
+              "value": 5,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "execute-patrol",
       "name": "Run Siskamling Patrol",
-      "type": "n8n-nodes-base.executeCommand",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         760,
         340
       ],
-      "notes": "Eksekusi runner patroli bot Python dengan output JSON manifest.",
+      "notes": "Panggil endpoint patroli risiko (POST /patrol) di HTTP API Siskamling.",
       "parameters": {
-        "command": "=/home/diwan/.hermes/tools/python-3.14.7+20240901-linux-x64/bin/python3 -m siskamling.bot --broadcast --threshold {{ $json.alert_threshold }} --n-gainers {{ $json.n_gainers }} --days {{ $json.fetch_days }} --json"
+        "method": "POST",
+        "url": "={{ $json.api_base_url }}/patrol",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ threshold: $json.alert_threshold, n_gainers: $json.n_gainers, fetch_days: $json.fetch_days }) }}",
+        "options": {
+          "timeout": 600000
+        }
+      }
+    },
+    {
+      "id": "execute-morning",
+      "name": "Run Morning Brief",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        620
+      ],
+      "notes": "Panggil endpoint briefing pagi (POST /morning-brief) — screening fundamental deterministik.",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.api_base_url }}/morning-brief",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ n_candidates: $json.n_candidates, max_pe: $json.max_pe, min_dividend_yield: $json.min_dividend_yield }) }}",
+        "options": {
+          "timeout": 600000
+        }
       }
     },
     {
@@ -96,11 +192,27 @@
         1020,
         340
       ],
-      "notes": "Parsing hasil eksekusi manifest JSON dan format data ringkasan ronda.",
+      "notes": "Respons JSON dari /patrol sudah ter-parse; susun ringkasan ronda.",
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const raw = $json.stdout || \"{}\";\ntry {\n  const manifest = JSON.parse(raw);\n  return [{\n    json: {\n      status: manifest.n_alerts > 0 ? \"🚨 Alarm Bahaya Berbunyi\" : \"🛡️ Pasar Kondusif\",\n      run_id: manifest.run_id,\n      scanned: manifest.n_gainers_scanned,\n      alerts_count: manifest.n_alerts,\n      errors_count: manifest.n_errors,\n      alerts: manifest.alerts,\n      started_at: manifest.started_at,\n      finished_at: manifest.finished_at\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      status: \"⚠️ Error Parsing Output\",\n      raw_stdout: raw,\n      error: e.message\n    }\n  }];\n}"
+        "jsCode": "const manifest = $json.manifest || $json;\nconst hasAlerts = (manifest.n_alerts ?? 0) > 0;\nreturn [{\n  json: {\n    status: hasAlerts ? \"🚨 Alarm Bahaya Berbunyi\" : \"🛡️ Pasar Kondusif\",\n    run_id: manifest.run_id,\n    scanned: manifest.n_gainers_scanned,\n    alerts_count: manifest.n_alerts,\n    errors_count: manifest.n_errors,\n    alerts: manifest.alerts,\n    started_at: manifest.started_at,\n    finished_at: manifest.finished_at\n  }\n}];"
+      }
+    },
+    {
+      "id": "parse-morning",
+      "name": "Parse Morning Brief",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        620
+      ],
+      "notes": "Respons JSON dari /morning-brief sudah ter-parse; susun ringkasan kandidat.",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const manifest = $json.manifest || $json;\nconst hasCandidates = (manifest.n_candidates ?? 0) > 0;\nreturn [{\n  json: {\n    status: hasCandidates ? \"🌅 Briefing Pagi Terkirim\" : \"✅ Tidak Ada Kandidat\",\n    run_id: manifest.run_id,\n    candidates_count: manifest.n_candidates ?? 0,\n    universe_scanned: manifest.n_universe_scanned ?? 0,\n    candidates: manifest.candidates || [],\n    errors_count: manifest.n_errors ?? 0,\n    errors: manifest.errors || [],\n    started_at: manifest.started_at,\n    finished_at: manifest.finished_at\n  }\n}];"
       }
     },
     {
@@ -113,9 +225,9 @@
         60
       ],
       "parameters": {
-        "content": "## 🏘️ Siskamling Pasar — IDX Radar Anti-Pom-Pom\n**Otomasi Patroli Sore Bursa Efek Indonesia (Track 2: Automation & Workflows)**\n\n### Cara Kerja\n1. **Trigger**: Berjalan otomatis tiap hari bursa pukul 16:30 WIB (atau klik tombol *Test Patrol On-Demand*).\n2. **Configuration**: Ubah parameter threshold skor risiko (default: 40) atau jumlah top gainers (default: 20) langsung dari satu kotak.\n3. **Run Patrol**: Python runner memindai top gainers, evaluasi 4 pilar teknikal deterministik, LLM persona Pak RT, lalu kirim alert ke Telegram.\n4. **Manifest**: Hasil tercatat rapi di run history dan folder .",
-        "height": 170,
-        "width": 700,
+        "content": "## 🏘️ Siskamling Pasar — IDX Radar Anti-Pom-Pom\n**Dual Pipeline Otomasi Bursa Efek Indonesia (Track 2: Automation & Workflows)**\n\nIntegrasi via **HTTP API** (FastAPI), bukan subprocess. Jalankan server sekali di mesin yang sama dengan n8n:\n`python3 -m siskamling.bot --serve --host 0.0.0.0 --port 8000` (atau `uvicorn siskamling.api:app --port 8000`).\nBase URL diatur di node **Configuration** / **Configuration Morning Brief** (`api_base_url`).\n\n### Pipeline 1 — Morning Brief (08:30 WIB)\n1. **Trigger**: Otomatis tiap hari bursa pukul 08:30 WIB.\n2. **Configuration Morning Brief**: Atur `api_base_url`, jumlah kandidat (default: 3), batas PE (default: 20), dan dividend yield minimal (default: 5%).\n3. **Run Morning Brief**: `POST /morning-brief` — Python runner menyaring kandidat fundamental sehat (rule engine deterministik), lalu menyusun briefing.\n4. **Parse Morning Brief**: Respons JSON manifest; ringkasan kandidat tersedia di run history.\n\n### Pipeline 2 — Post-Market Radar (16:30 WIB)\n1. **Trigger**: Otomatis tiap hari bursa pukul 16:30 WIB (atau klik tombol *Test Patrol On-Demand*).\n2. **Configuration**: Atur `api_base_url`, `alert_threshold` (default: 40), `n_gainers` (default: 20), dan `fetch_days` dari satu kotak.\n3. **Run Siskamling Patrol**: `POST /patrol` — memindai top gainers, evaluasi 4 pilar teknikal deterministik, susun laporan bullet, lalu broadcast ke Telegram/Discord.\n4. **Parse Run Manifest**: Respons JSON manifest tercatat rapi di run history dan folder runs/.\n\n### Catatan Deployment\n- **HTTP API**: server `siskamling.api:app` harus berjalan dan terjangkau dari n8n. Ganti `api_base_url` bila host/port berbeda.\n- **Env var**: Siapkan `.env` berisi `SECTORS_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (opsional: `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`).\n- **Endpoint tersedia**: `GET /health`, `POST /patrol`, `POST /morning-brief`, `GET /ronda/{ticker}`.",
+        "height": 240,
+        "width": 720,
         "color": 4
       }
     }
@@ -143,6 +255,17 @@
         ]
       ]
     },
+    "Morning Brief (08:30 WIB)": {
+      "main": [
+        [
+          {
+            "node": "Configuration Morning Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Configuration": {
       "main": [
         [
@@ -154,11 +277,33 @@
         ]
       ]
     },
+    "Configuration Morning Brief": {
+      "main": [
+        [
+          {
+            "node": "Run Morning Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Run Siskamling Patrol": {
       "main": [
         [
           {
             "node": "Parse Run Manifest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Morning Brief": {
+      "main": [
+        [
+          {
+            "node": "Parse Morning Brief",
             "type": "main",
             "index": 0
           }
@@ -177,9 +322,9 @@
   "meta": null,
   "nodeGroups": [],
   "pinData": null,
-  "versionId": "c4a25f71-30af-4b06-bc9f-12d2ef5afd63",
+  "versionId": "7b8d9f3e-41af-4b06-bc9f-12d2ef5afd63",
   "activeVersionId": null,
-  "versionCounter": 3,
+  "versionCounter": 5,
   "triggerCount": 0,
   "sourceWorkflowId": null,
   "shared": [
@@ -196,7 +341,7 @@
         "name": "Diwan Parker <arsyade09@gmail.com>",
         "type": "personal",
         "icon": null,
-        "description": null,
+        "description": "",
         "customTelemetryTags": [],
         "creatorId": "81505b6c-2410-4ea4-b88a-c1dffe464234"
       }

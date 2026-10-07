@@ -56,6 +56,29 @@ class Channel(ABC):
         """Bungkus teks dengan markup tebal milik platform."""
 
 
+class PlainTextChannel(Channel):
+    """Kanal virtual tanpa jaringan: merender pesan sebagai teks polos (tanpa markup).
+
+    Dipakai untuk menghasilkan narasi mentah pada respons API/cURL tanpa perlu
+    kredensial Telegram/Discord. Tidak didaftarkan di registry, sehingga tidak
+    pernah ikut ter-broadcast.
+    """
+
+    name = "plain"
+
+    def is_configured(self) -> bool:
+        return True
+
+    def default_recipient(self) -> str:
+        return ""
+
+    def send(self, recipient: str, text: str) -> None:
+        return None
+
+    def bold(self, text: str) -> str:
+        return text
+
+
 class InteractiveChannel(Channel):
     """Kanal yang juga mendengarkan perintah masuk secara live."""
 

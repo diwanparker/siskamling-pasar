@@ -3,6 +3,10 @@
 Membungkus orkestrasi di `siskamling.bot` menjadi endpoint HTTP agar otomasi
 (n8n, cron eksternal, dsb.) cukup memanggil endpoint — tanpa subprocess.
 
+Endpoint tidak terikat pada Telegram/Discord: setiap respons selalu menyertakan
+`messages` (narasi teks polos) sehingga bisa di-curl tanpa kredensial kanal.
+Set `dry_run: true` untuk memastikan tidak ada pesan yang dikirim ke kanal.
+
 Menjalankan:
     uvicorn siskamling.api:app --host 0.0.0.0 --port 8000
     # atau: python3 -m siskamling.bot --serve --host 0.0.0.0 --port 8000
@@ -25,6 +29,7 @@ class PatrolRequest(BaseModel):
     threshold: int | None = None
     n_gainers: int | None = None
     fetch_days: int | None = None
+    dry_run: bool = False  # True = jangan kirim ke kanal, cukup kembalikan narasi
 
 
 class MorningBriefRequest(BaseModel):
@@ -34,6 +39,7 @@ class MorningBriefRequest(BaseModel):
     max_pe: float | None = None
     min_dividend_yield: float | None = None
     universe_size: int | None = None
+    dry_run: bool = False  # True = jangan kirim ke kanal, cukup kembalikan narasi
 
 
 @app.get("/health")
@@ -43,30 +49,32 @@ def health() -> dict[str, str]:
 
 @app.post("/patrol")
 def patrol(request: PatrolRequest | None = None) -> dict[str, Any]:
-    """Jalankan patroli risiko sore + broadcast, kembalikan run manifest."""
+    """Jalankan patroli risiko sore. Respons memuat run manifest + `messages` (narasi)."""
     params = request or PatrolRequest()
     return execute_daily_broadcast(
         threshold=params.threshold,
         n_gainers=params.n_gainers,
         fetch_days=params.fetch_days,
+        dry_run=params.dry_run,
     )
 
 
 @app.post("/morning-brief")
 def morning_brief(request: MorningBriefRequest | None = None) -> dict[str, Any]:
-    """Jalankan briefing pagi (screening fundamental) + broadcast, kembalikan manifest."""
+    """Jalankan briefing pagi (screening fundamental). Respons memuat manifest + `messages`."""
     params = request or MorningBriefRequest()
     return execute_morning_brief(
         n_candidates=params.n_candidates,
         max_pe=params.max_pe,
         min_dividend_yield=params.min_dividend_yield,
         universe_size=params.universe_size,
+        dry_run=params.dry_run,
     )
 
 
 @app.get("/ronda/{ticker}")
 def ronda(ticker: str) -> dict[str, Any]:
-    """Hitung skor risiko satu saham."""
+    """Hitung skor risiko satu saham (memuat `narration` di respons)."""
     result = score_ticker(ticker)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])

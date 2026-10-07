@@ -120,6 +120,33 @@ class TestMorningBrief(unittest.TestCase):
         mock_dispatch.assert_not_called()
 
 
+class TestDryRun(unittest.TestCase):
+    @patch("siskamling.bot.dispatch_report")
+    @patch("siskamling.bot.score_ticker")
+    @patch("siskamling.bot.sectors.get")
+    def test_dry_run_skips_dispatch_but_returns_messages(self, mock_get, mock_score, mock_dispatch):
+        mock_get.return_value = {"top_gainers": {"1d": [{"symbol": "AAA.JK"}]}}
+        mock_score.return_value = {"symbol": "AAA.JK", "score": 80, "narration": "bahaya"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("siskamling.bot.RUNS_DIRECTORY", Path(tmp)):
+                manifest = execute_daily_broadcast(threshold=40, dry_run=True)
+
+        mock_dispatch.assert_not_called()
+        self.assertTrue(any("AAA" in message for message in manifest["messages"]))
+        self.assertIn("bahaya", manifest["messages"])
+
+    @patch("siskamling.bot.dispatch_report")
+    @patch("siskamling.bot.sectors.get")
+    def test_manifest_always_has_messages(self, mock_get, mock_dispatch):
+        mock_get.return_value = {"top_gainers": {"1d": []}}
+
+        manifest = execute_daily_broadcast()
+
+        self.assertIn("messages", manifest)
+        self.assertTrue(any("kondusif" in message for message in manifest["messages"]))
+
+
 class TestFundamentalMetrics(unittest.TestCase):
     def test_picks_latest_year_earnings(self):
         report = {"financials": {"historical_financials": [{"year": 2023, "earnings": 1}, {"year": 2025, "earnings": 9}]}}

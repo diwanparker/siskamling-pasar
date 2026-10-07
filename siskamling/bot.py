@@ -3,6 +3,10 @@
 Logika platform (Telegram, Discord, ...) didelegasikan sepenuhnya ke paket
 `siskamling.platforms`. Modul ini hanya berisi domain (skoring/screening) dan
 orkestrasi, sehingga platform baru tidak menambah kode platform-spesifik di sini.
+
+Orkestrasi selalu menghasilkan `messages` (narasi teks polos, lihat
+`PlainTextChannel`) di manifest, terlepas dari kanal mana pun. Pengiriman ke
+kanal bersifat opsional (`dry_run` / tidak ada kredensial).
 """
 from __future__ import annotations
 
@@ -18,7 +22,16 @@ from typing import Any
 
 from . import sectors
 from .narrator import narrate, narrate_candidate
-from .platforms import CommandRouter, all_channels, dispatch_briefing, dispatch_report, run_listeners
+from .platforms import (
+    CommandRouter,
+    PlainTextChannel,
+    all_channels,
+    build_briefing_messages,
+    build_report_messages,
+    dispatch_briefing,
+    dispatch_report,
+    run_listeners,
+)
 from .score import calculate_risk_score, extract_features
 
 logging.basicConfig(format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", level=logging.INFO)
@@ -35,6 +48,9 @@ DEFAULT_N_CANDIDATES = 3
 DEFAULT_MAX_PE = 20.0
 DEFAULT_MIN_DIVIDEND_YIELD_PCT = 5.0
 DEFAULT_UNIVERSE_SIZE = 20
+
+# Perender teks polos untuk manifest/API (tidak pernah dikirim ke kanal)
+PLAIN_TEXT_CHANNEL = PlainTextChannel()
 
 
 # ─── Penilaian Saham Tunggal ───────────────────────────────────────
@@ -127,17 +143,23 @@ def execute_daily_broadcast(
     threshold: int | None = None,
     n_gainers: int | None = None,
     fetch_days: int | None = None,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Pindai top gainers harian, evaluasi risiko, broadcast alert, dan catat manifest."""
+    """Pindai top gainers harian, evaluasi risiko, broadcast alert, dan catat manifest.
+
+    Manifest selalu memuat `messages` (narasi teks polos). `dry_run=True` menahan
+    pengiriman ke kanal Telegram/Discord.
+    """
     resolved_threshold = threshold if threshold is not None else int(os.environ.get("RISK_ALERT_THRESHOLD", RISK_ALERT_THRESHOLD))
     resolved_n_gainers = n_gainers if n_gainers is not None else int(os.environ.get("N_GAINERS", 20))
     resolved_fetch_days = fetch_days if fetch_days is not None else int(os.environ.get("FETCH_DAYS", DEFAULT_FETCH_DAYS))
 
     logger.info(
-        "Memulai patroli ronda broadcast harian (threshold=%d, n_gainers=%d, fetch_days=%d)",
+        "Memulai patroli ronda broadcast harian (threshold=%d, n_gainers=%d, fetch_days=%d, dry_run=%s)",
         resolved_threshold,
         resolved_n_gainers,
         resolved_fetch_days,
+        dry_run,
     )
     start_timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -145,11 +167,14 @@ def execute_daily_broadcast(
         gainer_items = _fetch_top_gainers(resolved_n_gainers)
     except sectors.SectorsError as error:
         logger.error("Gagal mengambil daftar top gainers: %s", error)
-        return _build_manifest(start_timestamp, 0, [], [str(error)])
+        return _build_manifest(start_timestamp, 0, [], [str(error)], messages=[])
 
     if not gainer_items:
         logger.warning("Tidak ada daftar top gainers untuk hari ini")
-        return _build_manifest(start_timestamp, 0, [], [])
+        return _build_manifest(
+            start_timestamp, 0, [], [],
+            messages=build_report_messages(PLAIN_TEXT_CHANNEL, []),
+        )
 
     triggered_alerts, encountered_errors = _evaluate_gainers(
         gainer_items,
@@ -157,11 +182,18 @@ def execute_daily_broadcast(
         resolved_fetch_days,
     )
 
-    # Fan-out ke seluruh kanal notifikasi yang terkonfigurasi (Telegram, Discord, ...)
-    dispatch_report(all_channels(), triggered_alerts)
+    messages = build_report_messages(PLAIN_TEXT_CHANNEL, triggered_alerts)
 
-    run_manifest = _build_manifest(start_timestamp, len(gainer_items), triggered_alerts, encountered_errors)
-    _save_manifest_to_disk(run_manifest)
+    if not dry_run:
+        # Fan-out ke seluruh kanal notifikasi yang terkonfigurasi (Telegram, Discord, ...).
+        # Tidak ada kanal terkonfigurasi → aman, tidak ada yang dikirim.
+        dispatch_report(all_channels(), triggered_alerts)
+
+    run_manifest = _build_manifest(start_timestamp, len(gainer_items), triggered_alerts, encountered_errors, messages=messages)
+    RUNS_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    manifest_path = RUNS_DIRECTORY / f"{date.today().isoformat()}.json"
+    manifest_path.write_text(json.dumps(run_manifest, indent=2), encoding="utf-8")
+    logger.info("Run manifest berhasil disimpan: %s", manifest_path)
     return run_manifest
 
 
@@ -179,10 +211,11 @@ class ManifestData:
 
 
 def _build_manifest(
-    start_timestamp: str | ManifestData,
-    n_gainers_scanned: int = 0,
-    triggered_alerts: list[dict[str, Any]] | None = None,
-    encountered_errors: list[str] | None = None,
+    start_timestamp: str,
+    n_gainers_scanned: int,
+    triggered_alerts: list[dict[str, Any]],
+    encountered_errors: list[str],
+    messages: list[str],
 ) -> dict[str, Any]:
     """Susun run manifest (bukti otomasi terjadwal tanpa intervensi manusia)."""
     if isinstance(start_timestamp, ManifestData):
@@ -200,11 +233,12 @@ def _build_manifest(
         "run_id": hashlib.sha1(start_ts.encode()).hexdigest()[:12],
         "started_at": start_ts,
         "finished_at": datetime.now(timezone.utc).isoformat(),
-        "n_gainers_scanned": scanned,
-        "n_alerts": len(alerts),
-        "n_errors": len(errors),
-        "alerts": [{"symbol": alert["symbol"], "score": alert["score"]} for alert in alerts],
-        "errors": errors[:10],
+        "n_gainers_scanned": n_gainers_scanned,
+        "n_alerts": len(triggered_alerts),
+        "n_errors": len(encountered_errors),
+        "alerts": [{"symbol": alert["symbol"], "score": alert["score"]} for alert in triggered_alerts],
+        "messages": messages,
+        "errors": encountered_errors[:10],
     }
 
 
@@ -254,8 +288,13 @@ def execute_morning_brief(
     max_pe: float | None = None,
     min_dividend_yield: float | None = None,
     universe_size: int | None = None,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Saring kandidat fundamental sehat, broadcast briefing pagi, dan catat manifest."""
+    """Saring kandidat fundamental sehat, broadcast briefing pagi, dan catat manifest.
+
+    Manifest selalu memuat `messages` (narasi teks polos). `dry_run=True` menahan
+    pengiriman ke kanal Telegram/Discord.
+    """
     resolved_n = n_candidates if n_candidates is not None else int(os.environ.get("N_CANDIDATES", DEFAULT_N_CANDIDATES))
     resolved_max_pe = max_pe if max_pe is not None else float(os.environ.get("MAX_PE", DEFAULT_MAX_PE))
     resolved_min_yield = (
@@ -268,11 +307,12 @@ def execute_morning_brief(
     )
 
     logger.info(
-        "Memulai briefing pagi (n_candidates=%d, max_pe=%.1f, min_yield=%.1f%%, universe=%d)",
+        "Memulai briefing pagi (n_candidates=%d, max_pe=%.1f, min_yield=%.1f%%, universe=%d, dry_run=%s)",
         resolved_n,
         resolved_max_pe,
         resolved_min_yield,
         resolved_universe,
+        dry_run,
     )
     start_timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -280,7 +320,7 @@ def execute_morning_brief(
         universe = sectors.screener(where="market_cap IS NOT NULL", order_by="-market_cap", limit=resolved_universe)
     except sectors.SectorsError as error:
         logger.error("Gagal mengambil universe screener: %s", error)
-        return _build_briefing_manifest(start_timestamp, 0, [], [str(error)])
+        return _build_briefing_manifest(start_timestamp, 0, [], [str(error)], messages=[])
 
     candidates: list[dict[str, Any]] = []
     encountered_errors: list[str] = []
@@ -306,9 +346,13 @@ def execute_morning_brief(
     candidates.sort(key=lambda candidate: (-(candidate.get("dividend_yield") or 0), -(candidate.get("market_cap") or 0)))
     selected = candidates[:resolved_n]
 
-    dispatch_briefing(all_channels(), selected)
+    messages = build_briefing_messages(PLAIN_TEXT_CHANNEL, selected)
 
-    manifest = _build_briefing_manifest(start_timestamp, len(universe), selected, encountered_errors)
+    if not dry_run:
+        # Fan-out ke seluruh kanal notifikasi yang terkonfigurasi (Telegram, Discord, ...).
+        dispatch_briefing(all_channels(), selected)
+
+    manifest = _build_briefing_manifest(start_timestamp, len(universe), selected, encountered_errors, messages=messages)
     RUNS_DIRECTORY.mkdir(parents=True, exist_ok=True)
     manifest_path = RUNS_DIRECTORY / f"morning-{date.today().isoformat()}.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -321,6 +365,7 @@ def _build_briefing_manifest(
     n_universe_scanned: int,
     candidates: list[dict[str, Any]],
     encountered_errors: list[str],
+    messages: list[str],
 ) -> dict[str, Any]:
     """Susun manifest briefing pagi (audit trail screening fundamental)."""
     return {
@@ -340,6 +385,7 @@ def _build_briefing_manifest(
             }
             for candidate in candidates
         ],
+        "messages": messages,
         "errors": encountered_errors[:10],
     }
 
@@ -365,6 +411,7 @@ def main() -> None:
     parser.add_argument("--morning-brief", action="store_true", dest="morning_brief", help="Jalankan briefing pagi (screening fundamental) dan broadcast")
     parser.add_argument("--poll", action="store_true", help="Jalankan listener bot Telegram & Discord dalam mode polling")
     parser.add_argument("--serve", action="store_true", help="Jalankan HTTP API (FastAPI + uvicorn)")
+    parser.add_argument("--dry-run", action="store_true", dest="dry_run", help="Jangan kirim ke kanal; cukup kembalikan narasi")
     parser.add_argument("--test", metavar="TICKER", help="Uji kalkulasi dan narasi satu ticker di konsol")
     parser.add_argument("--threshold", type=int, default=None, help="Ambang skor risiko untuk alert (default: 40)")
     parser.add_argument("--n-gainers", type=int, default=None, dest="n_gainers", help="Jumlah saham top gainers yang dipindai (default: 20)")
@@ -372,7 +419,7 @@ def main() -> None:
     parser.add_argument("--top", type=int, default=None, help="Jumlah kandidat briefing pagi (default: 3)")
     parser.add_argument("--max-pe", type=float, default=None, dest="max_pe", help="Batas PE briefing pagi (default: 20)")
     parser.add_argument("--min-dividend-yield", type=float, default=None, dest="min_dividend_yield", help="Dividend yield minimum briefing pagi dalam %% (default: 5)")
-    parser.add_argument("--universe-size", type=int, default=None, dest="universe_size", help="Jumlah saham universe yang diperiksa briefing pagi (default: 30)")
+    parser.add_argument("--universe-size", type=int, default=None, dest="universe_size", help="Jumlah saham universe yang diperiksa briefing pagi (default: 20)")
     parser.add_argument("--host", default="127.0.0.1", help="Host HTTP API (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="Port HTTP API (default: 8000)")
     parser.add_argument("--json", action="store_true", help="Cetak run manifest dalam format JSON ke stdout (untuk n8n/otomasi)")
@@ -385,6 +432,7 @@ def main() -> None:
             threshold=args.threshold,
             n_gainers=args.n_gainers,
             fetch_days=args.days,
+            dry_run=args.dry_run,
         )
         if args.json:
             print(json.dumps(manifest, indent=2, ensure_ascii=False, default=str))
@@ -394,6 +442,7 @@ def main() -> None:
             max_pe=args.max_pe,
             min_dividend_yield=args.min_dividend_yield,
             universe_size=args.universe_size,
+            dry_run=args.dry_run,
         )
         if args.json:
             print(json.dumps(manifest, indent=2, ensure_ascii=False, default=str))

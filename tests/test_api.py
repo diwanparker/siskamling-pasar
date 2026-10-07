@@ -27,19 +27,25 @@ class TestApi(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
 
-    @patch("siskamling.api.execute_daily_broadcast", return_value={"n_alerts": 0, "alerts": []})
+    @patch("siskamling.api.execute_daily_broadcast", return_value={"n_alerts": 0, "alerts": [], "messages": []})
     def test_patrol_passes_params(self, mock_execute):
         response = self.client.post("/patrol", json={"threshold": 50, "n_gainers": 10, "fetch_days": 60})
         self.assertEqual(response.status_code, 200)
-        mock_execute.assert_called_once_with(threshold=50, n_gainers=10, fetch_days=60)
+        mock_execute.assert_called_once_with(threshold=50, n_gainers=10, fetch_days=60, dry_run=False)
 
-    @patch("siskamling.api.execute_daily_broadcast", return_value={"n_alerts": 0})
+    @patch("siskamling.api.execute_daily_broadcast", return_value={"n_alerts": 0, "messages": ["kondusif"]})
     def test_patrol_allows_empty_body(self, mock_execute):
         response = self.client.post("/patrol")
         self.assertEqual(response.status_code, 200)
-        mock_execute.assert_called_once_with(threshold=None, n_gainers=None, fetch_days=None)
+        mock_execute.assert_called_once_with(threshold=None, n_gainers=None, fetch_days=None, dry_run=False)
 
-    @patch("siskamling.api.execute_morning_brief", return_value={"n_candidates": 0, "candidates": []})
+    @patch("siskamling.api.execute_daily_broadcast", return_value={"n_alerts": 0, "messages": ["x"]})
+    def test_patrol_dry_run_flag_passed(self, mock_execute):
+        response = self.client.post("/patrol", json={"dry_run": True, "n_gainers": 3})
+        self.assertEqual(response.status_code, 200)
+        mock_execute.assert_called_once_with(threshold=None, n_gainers=3, fetch_days=None, dry_run=True)
+
+    @patch("siskamling.api.execute_morning_brief", return_value={"n_candidates": 0, "candidates": [], "messages": []})
     def test_morning_brief_passes_params(self, mock_execute):
         response = self.client.post(
             "/morning-brief",
@@ -47,7 +53,7 @@ class TestApi(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         mock_execute.assert_called_once_with(
-            n_candidates=2, max_pe=15.0, min_dividend_yield=6.0, universe_size=None
+            n_candidates=2, max_pe=15.0, min_dividend_yield=6.0, universe_size=None, dry_run=False
         )
 
     @patch("siskamling.api.score_ticker", return_value={"symbol": "BBCA.JK", "score": 77})

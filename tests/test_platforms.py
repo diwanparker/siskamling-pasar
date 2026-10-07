@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from siskamling.platforms.base import (
     Channel,
     CommandRouter,
+    PlainTextChannel,
     ReplyContext,
     build_briefing_messages,
     build_report_messages,
@@ -232,6 +233,23 @@ class TestBriefingBuilder(unittest.TestCase):
         self.assertEqual(messages[1], "high")
         self.assertEqual(messages[2], "low")
         self.assertIn("bukan saran investasi", messages[-1])
+
+
+class TestPlainTextChannel(unittest.TestCase):
+    def test_bold_is_identity(self):
+        self.assertEqual(PlainTextChannel().bold("hi"), "hi")
+
+    def test_send_is_noop(self):
+        self.assertIsNone(PlainTextChannel().send("dest", "halo"))
+
+    def test_report_renders_without_markup(self):
+        messages = build_report_messages(
+            PlainTextChannel(),
+            [{"symbol": "X.JK", "score": 50, "narration": "narasi polos"}],
+        )
+        self.assertIn("Laporan Ronda Sore", messages[0])
+        self.assertNotIn("**", messages[0])
+        self.assertNotIn("*", messages[0])
 
 
 if __name__ == "__main__":
