@@ -152,6 +152,20 @@ class TestCommandRouter(unittest.TestCase):
         self.assertIn("Berhasil mendaftarkan 2 saham", sent[0])
         mock_set.assert_called_once_with("u2", ["BBCA", "TLKM"])
 
+    def test_ronda_aset_guides_user(self):
+        sent: list[str] = []
+        router = CommandRouter(evaluate=lambda t: {})
+        router.handle("/ronda aset", make_context(sent))
+        self.assertEqual(len(sent), 1)
+        self.assertIn("/aset", sent[0])
+        self.assertIn("Info Pos Ronda", sent[0])
+
+    def test_aset_tambah_missing_args_shows_format(self):
+        sent: list[str] = []
+        router = CommandRouter(evaluate=lambda t: {})
+        router.handle("/aset tambah", make_context(sent))
+        self.assertIn("Format perintah", sent[0])
+
 
 class TestTelegramChannel(unittest.TestCase):
     def test_bold_uses_markdown_v1(self):

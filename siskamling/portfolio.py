@@ -1,4 +1,4 @@
-﻿"""Modul manajemen portofolio dan watchlist saham warga (personal asset tracking)."""
+"""Modul manajemen portofolio dan watchlist saham warga (personal asset tracking)."""
 from __future__ import annotations
 
 import json
@@ -10,10 +10,16 @@ logger = logging.getLogger(__name__)
 PORTFOLIO_FILE = Path(__file__).resolve().parent.parent / "data" / "portofolio.json"
 
 
+RESERVED_WORDS = {"ASET", "PORTOFOLIO", "PORTFOLIO", "WATCHLIST", "TAMBAH", "HAPUS", "LIST", "HELP", "START"}
+
+
 def clean_ticker(ticker: str) -> str:
     """Normalisasi kode ticker IDX menjadi format TICKER.JK."""
     cleaned = ticker.strip().upper().rstrip(",.;:")
     if not cleaned:
+        return ""
+    base = cleaned.replace(".JK", "")
+    if base in RESERVED_WORDS:
         return ""
     if cleaned.endswith(".JK"):
         return cleaned

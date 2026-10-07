@@ -125,14 +125,34 @@ def score_ticker(symbol: str, days: int = DEFAULT_FETCH_DAYS) -> dict[str, Any]:
     try:
         bars = sectors.daily(clean_symbol, start_date.isoformat(), today.isoformat(), clean=True)
     except sectors.SectorsError as error:
-        return {"symbol": full_symbol, "error": f"Gagal mengambil data dari Sectors: {error}"}
+        err_msg = str(error)
+        if "404" in err_msg or "does not exist" in err_msg:
+            return {
+                "symbol": full_symbol,
+                "error": f"Saham {clean_symbol} tidak ditemukan di bursa IDX. Pastikan kode ticker 4 huruf sudah benar (contoh: BBRI, BBCA, TLKM).",
+            }
+        if "429" in err_msg:
+            return {
+                "symbol": full_symbol,
+                "error": "Layanan data bursa sedang sibuk (rate limit). Silakan coba beberapa saat lagi.",
+            }
+        return {
+            "symbol": full_symbol,
+            "error": f"Gagal memuat data transaksi saham {clean_symbol}. Silakan coba lagi nanti.",
+        }
 
     if len(bars) < MINIMUM_REQUIRED_BARS:
-        return {"symbol": full_symbol, "error": f"Data harian kurang dari {MINIMUM_REQUIRED_BARS} bar"}
+        return {
+            "symbol": full_symbol,
+            "error": f"Data perdagangan saham {clean_symbol} belum mencukupi (tersedia {len(bars)} bar, minimal {MINIMUM_REQUIRED_BARS} hari bursa).",
+        }
 
     features = extract_features(bars)
     if features is None:
-        return {"symbol": full_symbol, "error": "Gagal menghitung fitur teknikal"}
+        return {
+            "symbol": full_symbol,
+            "error": f"Gagal menghitung indikator teknikal untuk saham {clean_symbol}.",
+        }
 
     fundamental = _fetch_fundamental_metrics_for_score(clean_symbol)
     market_return = _fetch_market_return()

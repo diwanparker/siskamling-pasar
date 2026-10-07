@@ -115,10 +115,20 @@ class CommandRouter:
 
     def _handle_ronda(self, tokens: list[str], ctx: ReplyContext) -> None:
         if len(tokens) < 2:
-            ctx.send("ℹ️ Format perintah: `/ronda TICKER` (contoh: `/ronda BBCA` atau `/ronda UNSP`)")
+            ctx.send("ℹ️ Format perintah: `/ronda TICKER` (contoh: `/ronda BBCA` atau `/ronda BBRI`)")
             return
 
-        ticker = tokens[1].upper()
+        ticker = tokens[1].upper().replace(".JK", "")
+
+        # Antisipasi jika pengguna mengetik /ronda aset atau /ronda portofolio
+        if ticker in {"ASET", "PORTOFOLIO", "PORTFOLIO", "WATCHLIST"}:
+            ctx.send(
+                f"💡 {ctx.bold('Info Pos Ronda:')}\n\n"
+                "Perintah `/ronda` digunakan untuk meronda 1 kode saham spesifik (contoh: `/ronda BBRI`).\n\n"
+                "Untuk melihat atau mendaftarkan saham portofolio yang ingin diawasi rutin, gunakan perintah `/aset` (contoh: `/aset` atau `/aset BBRI, BBCA, TLKM`)."
+            )
+            return
+
         ctx.send(f"⏳ Sedang patroli ke pos saham {ctx.bold(ticker)}...")
         result = self._evaluate(ticker)
         if "error" in result:
@@ -147,12 +157,18 @@ class CommandRouter:
             return
 
         action = tokens[1].lower()
-        if action == "tambah" and len(tokens) >= 3:
+        if action == "tambah":
+            if len(tokens) < 3:
+                ctx.send("ℹ️ Format perintah: `/aset tambah TICKER` (contoh: `/aset tambah BBRI`)")
+                return
             sym = clean_ticker(tokens[2])
             updated = add_ticker(user_id, tokens[2])
             ctx.send(f"✅ Saham {ctx.bold(sym)} berhasil ditambahkan ke radar pantauan Anda!")
             return
-        elif action == "hapus" and len(tokens) >= 3:
+        elif action == "hapus":
+            if len(tokens) < 3:
+                ctx.send("ℹ️ Format perintah: `/aset hapus TICKER` (contoh: `/aset hapus BBRI`)")
+                return
             sym = clean_ticker(tokens[2])
             remove_ticker(user_id, tokens[2])
             ctx.send(f"🗑️ Saham {ctx.bold(sym)} telah dihapus dari radar pantauan Anda.")
