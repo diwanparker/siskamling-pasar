@@ -38,7 +38,7 @@ class TelegramChannel(InteractiveChannel):
     def bold(self, text: str) -> str:
         return f"*{text}*"
 
-    def request(self, method: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    def request(self, method: str, payload: dict[str, Any], timeout: int = 15) -> dict[str, Any] | None:
         """Kirim request POST ke Telegram Bot API."""
         token = self.token()
         if not token:
@@ -52,13 +52,16 @@ class TelegramChannel(InteractiveChannel):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=15) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             logger.error("Telegram API error %s: %s", error.code, error.read()[:200])
             return None
-        except urllib.error.URLError as error:
-            logger.error("Koneksi Telegram gagal: %s", error)
+        except (urllib.error.URLError, TimeoutError) as error:
+            if "timed out" in str(error).lower():
+                logger.debug("Telegram polling long-poll timed out normally")
+            else:
+                logger.error("Koneksi Telegram gagal: %s", error)
             return None
 
     def send(self, recipient: str, text: str) -> dict[str, Any] | None:
@@ -83,9 +86,9 @@ class TelegramChannel(InteractiveChannel):
 
         while True:
             try:
-                updates = self.request("getUpdates", {"offset": last_update_id, "timeout": 30})
+                updates = self.request("getUpdates", {"offset": last_update_id, "timeout": 20}, timeout=25)
                 if not updates or not updates.get("ok"):
-                    time.sleep(5)
+                    time.sleep(1)
                     continue
 
                 for update in updates.get("result", []):
