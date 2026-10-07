@@ -1,9 +1,9 @@
-{
-  "updatedAt": "2026-10-07T05:00:00.000Z",
+﻿{
+  "updatedAt": "2026-10-07T07:33:00.000Z",
   "createdAt": "2026-10-06T02:14:51.273Z",
   "id": "pre1mfiVh6jFxix2",
   "name": "Siskamling Pasar — Automated IDX Market Risk Patrol",
-  "description": "Dual pipeline via HTTP API: Morning Brief (08:30 WIB) + Post-Market Radar Anti-Pom-Pom (16:30 WIB).",
+  "description": "Triple pipeline via HTTP API: Morning Brief (08:30 WIB) + Post-Market Radar Anti-Pom-Pom (16:30 WIB) + Radar Aset Portofolio Warga.",
   "active": false,
   "isArchived": false,
   "nodes": [
@@ -47,6 +47,13 @@
           ]
         }
       }
+    },
+    {
+      "id": "trigger-portfolio",
+      "name": "Tinjau Aset Warga On-Demand",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 800]
     },
     {
       "id": "configuration",
@@ -127,6 +134,27 @@
       }
     },
     {
+      "id": "configuration-portfolio",
+      "name": "Configuration Portofolio",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [500, 800],
+      "notes": "Pusat kontrol base URL API untuk penarikan data portofolio warga.",
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "api_base_url",
+              "name": "api_base_url",
+              "value": "http://127.0.0.1:8000",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "execute-patrol",
       "name": "Run Siskamling Patrol",
       "type": "n8n-nodes-base.httpRequest",
@@ -163,12 +191,27 @@
       }
     },
     {
+      "id": "fetch-portfolio-assets",
+      "name": "Tarik Aset Portofolio Warga",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 800],
+      "notes": "Tarik seluruh saham yang didaftarkan warga via Telegram (/aset TICKER) melalui GET /portfolio.",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.api_base_url }}/portfolio",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
       "id": "parse-manifest",
       "name": "Parse Run Manifest",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1020, 340],
-      "notes": "Respons JSON dari /patrol sudah ter-parse; susun ringkasan ronda.",
+      "notes": "Respons JSON dari /patrol sudah ter-parse; susun ringkasan ronda dan status aset portofolio warga.",
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
@@ -189,15 +232,28 @@
       }
     },
     {
+      "id": "parse-portfolio",
+      "name": "Ringkasan Radar Portofolio Warga",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1020, 800],
+      "notes": "Rangkum status seluruh aset saham portofolio yang didaftarkan warga melalui bot Telegram.",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const res = $json;\nreturn [{\n  json: {\n    status: (res.total_users ?? 0) > 0 ? \"🛡️ Portofolio Terdaftar & Diawasi\" : \"📭 Belum Ada Aset Didaftarkan\",\n    total_warga: res.total_users ?? 0,\n    total_saham_diawasi: res.unique_stocks_count ?? 0,\n    daftar_saham: res.stocks ?? [],\n    panduan: \"Warga mendaftarkan saham via bot Telegram dengan perintah: /aset BBRI, BBCA, TLKM\"\n  }\n}];"
+      }
+    },
+    {
       "id": "sticky-documentation",
       "name": "Documentation Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [200, 60],
+      "position": [200, 40],
       "parameters": {
-        "content": "## 🏘️ Siskamling Pasar — IDX Radar Anti-Pom-Pom\n**Dual Pipeline Otomasi Bursa Efek Indonesia (Track 2: Automation & Workflows)**\n\nIntegrasi via **HTTP API** (FastAPI), bukan subprocess. Jalankan server sekali di mesin yang sama dengan n8n:\n`python3 -m siskamling.bot --serve --host 0.0.0.0 --port 8000` (atau `uvicorn siskamling.api:app --port 8000`).\nBase URL diatur di node **Configuration** / **Configuration Morning Brief** (`api_base_url`).\n\n### Pipeline 1 — Morning Brief (08:30 WIB)\n1. **Trigger**: Otomatis tiap hari bursa pukul 08:30 WIB.\n2. **Configuration Morning Brief**: Atur `api_base_url`, jumlah kandidat (default: 3), batas PE (default: 20), dan dividend yield minimal (default: 5%).\n3. **Run Morning Brief**: `POST /morning-brief` — Python runner menyaring kandidat fundamental sehat (rule engine deterministik), lalu menyusun briefing.\n4. **Parse Morning Brief**: Respons JSON manifest; ringkasan kandidat tersedia di run history.\n\n### Pipeline 2 — Post-Market Radar (16:30 WIB)\n1. **Trigger**: Otomatis tiap hari bursa pukul 16:30 WIB (atau klik tombol *Test Patrol On-Demand*).\n2. **Configuration**: Atur `api_base_url`, `alert_threshold` (default: 40), `n_gainers` (default: 20), dan `fetch_days` dari satu kotak.\n3. **Run Siskamling Patrol**: `POST /patrol` — memindai top gainers, evaluasi 4 pilar teknikal deterministik, susun laporan bullet, lalu broadcast ke Telegram/Discord.\n4. **Parse Run Manifest**: Respons JSON manifest tercatat rapi di run history dan folder runs/.\n\n### Catatan Deployment\n- **HTTP API**: server `siskamling.api:app` harus berjalan dan terjangkau dari n8n. Ganti `api_base_url` bila host/port berbeda.\n- **Env var**: Siapkan `.env` berisi `SECTORS_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (opsional: `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`).\n- **Endpoint tersedia**: `GET /health`, `POST /patrol`, `POST /morning-brief`, `GET /ronda/{ticker}`.",
-        "height": 240,
-        "width": 720,
+        "content": "## 🏘️ Siskamling Pasar — IDX Radar Anti-Pom-Pom\n**Triple Pipeline Otomasi Bursa Efek Indonesia (Track 2: Automation & Workflows)**\n\nIntegrasi via **HTTP API** (FastAPI) di mesin yang sama dengan n8n: `http://127.0.0.1:8000`.\n\n### Pipeline 1 — Morning Brief (08:30 WIB)\n1. **Trigger**: Otomatis tiap hari bursa pukul 08:30 WIB.\n2. **Run Morning Brief**: `POST /morning-brief` — Screening fundamental sehat (PE wajar, deviden yield tinggi) via rule engine deterministik.\n\n### Pipeline 2 — Post-Market Radar (16:30 WIB)\n1. **Trigger**: Otomatis tiap hari bursa pukul 16:30 WIB (atau tombol *Test Patrol On-Demand*).\n2. **Run Siskamling Patrol**: `POST /patrol` — Memindai Top Gainers + memeriksa saham portofolio warga, lalu broadcast alert risiko ke Telegram/Discord.\n\n### Pipeline 3 — Radar Aset Portofolio Warga (Telegram /aset Integration)\n1. **Trigger**: On-Demand via *Tinjau Aset Warga On-Demand*.\n2. **Tarik Aset Portofolio Warga**: `GET /portfolio` — Menarik daftar aset saham yang didaftarkan warga via Telegram (`/aset BBRI, BBCA, TLKM`).\n3. **Ringkasan Radar Portofolio Warga**: Memvalidasi status pengawasan aset aktif.",
+        "height": 200,
+        "width": 840,
         "color": 4
       }
     }
@@ -236,6 +292,17 @@
         ]
       ]
     },
+    "Tinjau Aset Warga On-Demand": {
+      "main": [
+        [
+          {
+            "node": "Configuration Portofolio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Configuration": {
       "main": [
         [
@@ -252,6 +319,17 @@
         [
           {
             "node": "Run Morning Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration Portofolio": {
+      "main": [
+        [
+          {
+            "node": "Tarik Aset Portofolio Warga",
             "type": "main",
             "index": 0
           }
@@ -279,6 +357,17 @@
           }
         ]
       ]
+    },
+    "Tarik Aset Portofolio Warga": {
+      "main": [
+        [
+          {
+            "node": "Ringkasan Radar Portofolio Warga",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -292,31 +381,10 @@
   "meta": null,
   "nodeGroups": [],
   "pinData": null,
-  "versionId": "7b8d9f3e-41af-4b06-bc9f-12d2ef5afd63",
+  "versionId": "7b8d9f3e-41af-4b06-bc9f-12d2ef5afd64",
   "activeVersionId": null,
-  "versionCounter": 5,
+  "versionCounter": 6,
   "triggerCount": 0,
   "sourceWorkflowId": null,
-  "shared": [
-    {
-      "updatedAt": "2026-10-06T02:14:51.282Z",
-      "createdAt": "2026-10-06T02:14:51.282Z",
-      "role": "workflow:owner",
-      "workflowId": "pre1mfiVh6jFxix2",
-      "projectId": "xJ3JUZujs2P3WCyk",
-      "project": {
-        "updatedAt": "2026-08-14T02:38:28.115Z",
-        "createdAt": "2026-07-28T09:00:21.478Z",
-        "id": "xJ3JUZujs2P3WCyk",
-        "name": "Diwan Parker <arsyade09@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": "",
-        "customTelemetryTags": [],
-        "creatorId": "81505b6c-2410-4ea4-b88a-c1dffe464234"
-      }
-    }
-  ],
-  "tags": [],
-  "activeVersion": null
+  "tags": []
 }
