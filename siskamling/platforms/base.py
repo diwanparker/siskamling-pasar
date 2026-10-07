@@ -135,18 +135,53 @@ def build_report_messages(channel: Channel, triggered_alerts: list[dict[str, Any
     return messages
 
 
-def dispatch_report(channels: Iterable[Channel], triggered_alerts: list[dict[str, Any]]) -> None:
-    """Siarkan laporan ke seluruh kanal yang terkonfigurasi (fan-out)."""
+def build_briefing_messages(channel: Channel, candidates: list[dict[str, Any]]) -> list[str]:
+    """Susun briefing pagi (kandidat fundamental) memakai markup tebal milik kanal."""
+    bold = channel.bold
+
+    if not candidates:
+        return [
+            f"🌅 {bold('Briefing Pagi')}\n\n"
+            "Tidak ada kandidat fundamental yang lolos kriteria hari ini."
+        ]
+
+    ranked = sorted(candidates, key=lambda item: -(item.get("dividend_yield") or 0))
+    scoreboard = "\n".join(
+        f"{rank}. {bold(item['symbol'].replace('.JK', ''))} — yield "
+        f"{(item.get('dividend_yield') or 0) * 100:.1f}%"
+        for rank, item in enumerate(ranked, start=1)
+    )
+    messages = [
+        f"🌅 {bold(f'Briefing Pagi — {date.today().isoformat()}')}\n\n"
+        f"Kandidat fundamental sehat ({bold(f'{len(ranked)} saham')}):\n\n{scoreboard}"
+    ]
+    messages.extend(item["narration"] for item in ranked)
+    messages.append("⚠️ Ini bukan saran investasi. Data dari Sectors.app.")
+    return messages
+
+
+def dispatch(channels: Iterable[Channel], build_messages: Callable[[Channel], list[str]]) -> None:
+    """Siarkan kumpulan pesan (dibangun per-kanal) ke seluruh kanal terkonfigurasi."""
     for channel in channels:
         recipient = channel.default_recipient()
         if not channel.is_configured() or not recipient:
             continue
 
-        messages = build_report_messages(channel, triggered_alerts)
+        messages = build_messages(channel)
         for index, message in enumerate(messages):
             channel.send(recipient, message)
             if index < len(messages) - 1:
                 time.sleep(1)  # jeda antar-pesan untuk menghindari rate limit
+
+
+def dispatch_report(channels: Iterable[Channel], triggered_alerts: list[dict[str, Any]]) -> None:
+    """Siarkan laporan risiko ke seluruh kanal yang terkonfigurasi (fan-out)."""
+    dispatch(channels, lambda channel: build_report_messages(channel, triggered_alerts))
+
+
+def dispatch_briefing(channels: Iterable[Channel], candidates: list[dict[str, Any]]) -> None:
+    """Siarkan briefing pagi ke seluruh kanal yang terkonfigurasi (fan-out)."""
+    dispatch(channels, lambda channel: build_briefing_messages(channel, candidates))
 
 
 def run_listeners(channels: Iterable[Channel], router: CommandRouter) -> None:

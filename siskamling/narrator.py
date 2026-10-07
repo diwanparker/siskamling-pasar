@@ -67,3 +67,36 @@ def build_alert_detail(symbol: str, score: int, reasons: list[str], features: di
 def narrate(symbol: str, score: int, reasons: list[str], features: dict[str, Any]) -> str:
     """Fasade utama narasi: susun laporan deterministik dari hasil skoring."""
     return build_alert_detail(symbol, score, reasons, features)
+
+
+# ─── Narasi Briefing Pagi (screening fundamental) ──────────────────
+
+def _format_trillion(value: Any) -> str:
+    if not isinstance(value, (int, float)):
+        return "n/a"
+    return f"Rp {value / 1_000_000_000_000:.2f} T"
+
+
+def _format_multiple(value: Any) -> str:
+    if not isinstance(value, (int, float)):
+        return "n/a"
+    return f"{value:.1f}x"
+
+
+def _format_ratio_percent(value: Any) -> str:
+    if not isinstance(value, (int, float)):
+        return "n/a"
+    return f"{value * 100:.1f}%"
+
+
+def narrate_candidate(symbol: str, metrics: dict[str, Any]) -> str:
+    """Susun blok detail satu kandidat fundamental (deterministik, tanpa LLM)."""
+    name = metrics.get("company_name") or symbol.replace(".JK", "")
+    return "\n".join([
+        f"🟢 {symbol.replace('.JK', '')} — {name}",
+        f"• Sektor: {metrics.get('sector') or 'n/a'}",
+        f"• Valuasi: PE {_format_multiple(metrics.get('forward_pe'))}",
+        f"• Dividen (TTM): {_format_ratio_percent(metrics.get('dividend_yield'))}",
+        f"• Laba terakhir: {_format_trillion(metrics.get('latest_earnings'))}",
+        f"• Kapitalisasi: {_format_trillion(metrics.get('market_cap'))}",
+    ])

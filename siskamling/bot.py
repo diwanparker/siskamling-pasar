@@ -1,8 +1,8 @@
-"""Runner Siskamling Pasar: skoring risiko, broadcast, dan CLI.
+"""Runner Siskamling Pasar: skoring risiko, briefing pagi, broadcast, dan CLI.
 
 Logika platform (Telegram, Discord, ...) didelegasikan sepenuhnya ke paket
-`siskamling.platforms`. Modul ini hanya berisi domain (skoring) dan orkestrasi,
-sehingga platform baru tidak menambah kode platform-spesifik di sini.
+`siskamling.platforms`. Modul ini hanya berisi domain (skoring/screening) dan
+orkestrasi, sehingga platform baru tidak menambah kode platform-spesifik di sini.
 """
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from . import sectors
-from .narrator import narrate
-from .platforms import CommandRouter, all_channels, dispatch_report, run_listeners
+from .narrator import narrate, narrate_candidate
+from .platforms import CommandRouter, all_channels, dispatch_briefing, dispatch_report, run_listeners
 from .score import calculate_risk_score, extract_features
 
 logging.basicConfig(format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", level=logging.INFO)
@@ -29,6 +29,12 @@ RUNS_DIRECTORY = PROJECT_ROOT / "runs"
 DEFAULT_FETCH_DAYS = 88
 MINIMUM_REQUIRED_BARS = 21
 RISK_ALERT_THRESHOLD = 40
+
+# Briefing pagi — screening fundamental deterministik
+DEFAULT_N_CANDIDATES = 3
+DEFAULT_MAX_PE = 20.0
+DEFAULT_MIN_DIVIDEND_YIELD_PCT = 5.0
+DEFAULT_UNIVERSE_SIZE = 20
 
 
 # ─── Penilaian Saham Tunggal ───────────────────────────────────────
@@ -148,24 +154,192 @@ def _build_manifest(
     }
 
 
+# ─── Briefing Pagi: Screening Fundamental ──────────────────────────
+
+def _extract_fundamental_metrics(report: dict[str, Any]) -> dict[str, Any]:
+    """Ambil metrik fundamental relevan dari payload Company Report."""
+    overview = report.get("overview") or {}
+    valuation = report.get("valuation") or {}
+    dividend = report.get("dividend") or {}
+    financials = report.get("financials") or {}
+
+    latest_earnings: float | None = None
+    historical = financials.get("historical_financials") or []
+    if historical:
+        latest_year = max(historical, key=lambda row: str(row.get("year", "")))
+        earnings = latest_year.get("earnings")
+        latest_earnings = earnings if isinstance(earnings, (int, float)) else None
+
+    return {
+        "company_name": report.get("company_name"),
+        "sector": overview.get("sector"),
+        "market_cap": overview.get("market_cap"),
+        "forward_pe": valuation.get("forward_pe"),
+        "dividend_yield": dividend.get("yield_ttm"),
+        "latest_earnings": latest_earnings,
+    }
+
+
+def _passes_fundamental_screen(metrics: dict[str, Any], max_pe: float, min_dividend_yield: float) -> bool:
+    """Saring deterministik: laba positif, PE wajar, dan dividend yield memadai."""
+    earnings = metrics.get("latest_earnings")
+    pe_ratio = metrics.get("forward_pe")
+    dividend_yield = metrics.get("dividend_yield")
+
+    if not isinstance(earnings, (int, float)) or earnings <= 0:
+        return False
+    if not isinstance(pe_ratio, (int, float)) or pe_ratio <= 0 or pe_ratio > max_pe:
+        return False
+    if not isinstance(dividend_yield, (int, float)) or dividend_yield < min_dividend_yield:
+        return False
+    return True
+
+
+def execute_morning_brief(
+    n_candidates: int | None = None,
+    max_pe: float | None = None,
+    min_dividend_yield: float | None = None,
+    universe_size: int | None = None,
+) -> dict[str, Any]:
+    """Saring kandidat fundamental sehat, broadcast briefing pagi, dan catat manifest."""
+    resolved_n = n_candidates if n_candidates is not None else int(os.environ.get("N_CANDIDATES", DEFAULT_N_CANDIDATES))
+    resolved_max_pe = max_pe if max_pe is not None else float(os.environ.get("MAX_PE", DEFAULT_MAX_PE))
+    resolved_min_yield = (
+        min_dividend_yield if min_dividend_yield is not None
+        else float(os.environ.get("MIN_DIVIDEND_YIELD", DEFAULT_MIN_DIVIDEND_YIELD_PCT))
+    )
+    resolved_universe = (
+        universe_size if universe_size is not None
+        else int(os.environ.get("UNIVERSE_SIZE", DEFAULT_UNIVERSE_SIZE))
+    )
+
+    logger.info(
+        "Memulai briefing pagi (n_candidates=%d, max_pe=%.1f, min_yield=%.1f%%, universe=%d)",
+        resolved_n,
+        resolved_max_pe,
+        resolved_min_yield,
+        resolved_universe,
+    )
+    start_timestamp = datetime.now(timezone.utc).isoformat()
+
+    try:
+        universe = sectors.screener(where="market_cap IS NOT NULL", order_by="-market_cap", limit=resolved_universe)
+    except sectors.SectorsError as error:
+        logger.error("Gagal mengambil universe screener: %s", error)
+        return _build_briefing_manifest(start_timestamp, 0, [], [str(error)])
+
+    candidates: list[dict[str, Any]] = []
+    encountered_errors: list[str] = []
+    min_yield_ratio = resolved_min_yield / 100.0
+
+    for item in universe:
+        symbol = str(item.get("symbol", ""))
+        if not symbol:
+            continue
+        try:
+            report = sectors.company_report(symbol, sections=["overview", "valuation", "dividend", "financials"])
+            metrics = _extract_fundamental_metrics(report)
+            if not _passes_fundamental_screen(metrics, resolved_max_pe, min_yield_ratio):
+                continue
+            candidates.append({
+                "symbol": symbol,
+                **metrics,
+                "narration": narrate_candidate(symbol, metrics),
+            })
+        except Exception as error:  # Defensive catch: satu kandidat gagal tak menggagalkan run
+            encountered_errors.append(f"{symbol}: {error}")
+
+    candidates.sort(key=lambda candidate: (-(candidate.get("dividend_yield") or 0), -(candidate.get("market_cap") or 0)))
+    selected = candidates[:resolved_n]
+
+    dispatch_briefing(all_channels(), selected)
+
+    manifest = _build_briefing_manifest(start_timestamp, len(universe), selected, encountered_errors)
+    RUNS_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    manifest_path = RUNS_DIRECTORY / f"morning-{date.today().isoformat()}.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    logger.info("Briefing manifest berhasil disimpan: %s", manifest_path)
+    return manifest
+
+
+def _build_briefing_manifest(
+    start_timestamp: str,
+    n_universe_scanned: int,
+    candidates: list[dict[str, Any]],
+    encountered_errors: list[str],
+) -> dict[str, Any]:
+    """Susun manifest briefing pagi (audit trail screening fundamental)."""
+    return {
+        "run_id": hashlib.sha1(f"morning-{start_timestamp}".encode()).hexdigest()[:12],
+        "started_at": start_timestamp,
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "n_universe_scanned": n_universe_scanned,
+        "n_candidates": len(candidates),
+        "n_errors": len(encountered_errors),
+        "candidates": [
+            {
+                "symbol": candidate["symbol"],
+                "sector": candidate.get("sector"),
+                "forward_pe": candidate.get("forward_pe"),
+                "dividend_yield": candidate.get("dividend_yield"),
+                "market_cap": candidate.get("market_cap"),
+            }
+            for candidate in candidates
+        ],
+        "errors": encountered_errors[:10],
+    }
+
+
+# ─── HTTP API (FastAPI) ────────────────────────────────────────────
+
+def _run_api(host: str, port: int) -> None:
+    """Jalankan server HTTP. Import uvicorn ditunda agar CLI tetap jalan tanpa dependensi."""
+    try:
+        import uvicorn
+    except ImportError as error:
+        raise SystemExit("uvicorn belum terpasang. Jalankan: pip install -r requirements.txt") from error
+
+    logger.info("Menjalankan HTTP API di http://%s:%d", host, port)
+    uvicorn.run("siskamling.api:app", host=host, port=port)
+
+
 # ─── CLI Entrypoint ────────────────────────────────────────────────
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bot & Runner Siskamling Pasar")
     parser.add_argument("--broadcast", action="store_true", help="Jalankan siklus patroli dan broadcast harian")
+    parser.add_argument("--morning-brief", action="store_true", dest="morning_brief", help="Jalankan briefing pagi (screening fundamental) dan broadcast")
     parser.add_argument("--poll", action="store_true", help="Jalankan listener bot Telegram & Discord dalam mode polling")
+    parser.add_argument("--serve", action="store_true", help="Jalankan HTTP API (FastAPI + uvicorn)")
     parser.add_argument("--test", metavar="TICKER", help="Uji kalkulasi dan narasi satu ticker di konsol")
     parser.add_argument("--threshold", type=int, default=None, help="Ambang skor risiko untuk alert (default: 40)")
     parser.add_argument("--n-gainers", type=int, default=None, dest="n_gainers", help="Jumlah saham top gainers yang dipindai (default: 20)")
     parser.add_argument("--days", type=int, default=None, dest="days", help="Jumlah hari bar OHLCV harian yang diambil (default: 88)")
+    parser.add_argument("--top", type=int, default=None, help="Jumlah kandidat briefing pagi (default: 3)")
+    parser.add_argument("--max-pe", type=float, default=None, dest="max_pe", help="Batas PE briefing pagi (default: 20)")
+    parser.add_argument("--min-dividend-yield", type=float, default=None, dest="min_dividend_yield", help="Dividend yield minimum briefing pagi dalam %% (default: 5)")
+    parser.add_argument("--universe-size", type=int, default=None, dest="universe_size", help="Jumlah saham universe yang diperiksa briefing pagi (default: 30)")
+    parser.add_argument("--host", default="127.0.0.1", help="Host HTTP API (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=8000, help="Port HTTP API (default: 8000)")
     parser.add_argument("--json", action="store_true", help="Cetak run manifest dalam format JSON ke stdout (untuk n8n/otomasi)")
     args = parser.parse_args()
 
-    if args.broadcast:
+    if args.serve:
+        _run_api(args.host, args.port)
+    elif args.broadcast:
         manifest = execute_daily_broadcast(
             threshold=args.threshold,
             n_gainers=args.n_gainers,
             fetch_days=args.days,
+        )
+        if args.json:
+            print(json.dumps(manifest, indent=2, ensure_ascii=False, default=str))
+    elif args.morning_brief:
+        manifest = execute_morning_brief(
+            n_candidates=args.top,
+            max_pe=args.max_pe,
+            min_dividend_yield=args.min_dividend_yield,
+            universe_size=args.universe_size,
         )
         if args.json:
             print(json.dumps(manifest, indent=2, ensure_ascii=False, default=str))

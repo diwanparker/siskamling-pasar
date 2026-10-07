@@ -9,15 +9,18 @@ from .base import (
     InteractiveChannel,
     ReplyContext,
     all_channels,
+    build_briefing_messages,
     build_report_messages,
     build_welcome_text,
+    dispatch,
+    dispatch_briefing,
     dispatch_report,
     register_channel,
     run_listeners,
 )
 
-from . import discord  
-from . import telegram  
+from . import discord
+from . import telegram
 
 __all__ = [
     "Channel",
@@ -25,8 +28,11 @@ __all__ = [
     "InteractiveChannel",
     "ReplyContext",
     "all_channels",
+    "build_briefing_messages",
     "build_report_messages",
     "build_welcome_text",
+    "dispatch",
+    "dispatch_briefing",
     "dispatch_report",
     "register_channel",
     "run_listeners",

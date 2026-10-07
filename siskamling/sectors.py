@@ -127,3 +127,40 @@ def daily(symbol: str, start: str, end: str, *, clean: bool = True) -> list[dict
     if not isinstance(raw, list):
         return []
     return clean_daily_bars(raw) if clean else raw
+
+
+def screener(
+    where: str | None = None,
+    order_by: str = "-market_cap",
+    limit: int = 50,
+    offset: int = 0,
+    *,
+    include_query_values: bool = True,
+    cache: bool = True,
+) -> list[dict[str, Any]]:
+    """Saring perusahaan via Companies Screener (`/v2/companies/`).
+
+    `where` memakai klausa SQL-like (mis. `"market_cap IS NOT NULL"`).
+    Mengembalikan daftar `results` (symbol, company_name, query_values).
+    """
+    params: dict[str, Any] = {
+        "where": where,
+        "order_by": order_by,
+        "limit": limit,
+        "offset": offset,
+        "include_query_values": "true" if include_query_values else "false",
+    }
+    response = get("/v2/companies/", params, cache=cache)
+    results = response.get("results") if isinstance(response, dict) else None
+    return results if isinstance(results, list) else []
+
+
+def company_report(symbol: str, sections: list[str] | None = None) -> dict[str, Any]:
+    """Ambil Company Report (`/v2/company/report/{symbol}/`) untuk bagian terpilih.
+
+    `sections` mis. `["overview", "valuation", "dividend", "financials"]`.
+    """
+    clean_symbol = symbol.upper().replace(".JK", "")
+    params = {"sections": ",".join(sections)} if sections else None
+    response = get(f"/v2/company/report/{clean_symbol}/", params)
+    return response if isinstance(response, dict) else {}

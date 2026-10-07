@@ -8,6 +8,7 @@ from siskamling.platforms.base import (
     Channel,
     CommandRouter,
     ReplyContext,
+    build_briefing_messages,
     build_report_messages,
     dispatch_report,
 )
@@ -211,6 +212,26 @@ class TestDiscordChannel(unittest.TestCase):
     def test_resolve_application_id_detects_from_token(self, mock_request):
         self.assertEqual(DiscordChannel().resolve_application_id(), "app-dari-token")
         mock_request.assert_called_once_with("GET", "/applications/@me")
+
+
+class TestBriefingBuilder(unittest.TestCase):
+    def test_empty_briefing_single_message(self):
+        messages = build_briefing_messages(RecordingChannel(), [])
+        self.assertEqual(len(messages), 1)
+        self.assertIn("Briefing Pagi", messages[0])
+        self.assertIn("Tidak ada kandidat", messages[0])
+
+    def test_briefing_ranked_by_dividend_yield(self):
+        candidates = [
+            {"symbol": "LOW.JK", "dividend_yield": 0.05, "narration": "low"},
+            {"symbol": "HIGH.JK", "dividend_yield": 0.09, "narration": "high"},
+        ]
+        messages = build_briefing_messages(RecordingChannel(), candidates)
+        self.assertEqual(len(messages), 4)  # header + 2 kandidat + disclaimer
+        self.assertIn("2 saham", messages[0])
+        self.assertEqual(messages[1], "high")
+        self.assertEqual(messages[2], "low")
+        self.assertIn("bukan saran investasi", messages[-1])
 
 
 if __name__ == "__main__":
