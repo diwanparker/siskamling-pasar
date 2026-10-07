@@ -1,60 +1,43 @@
-"""Unit tests untuk modul siskamling.narrator (grounding validator & fallback)."""
+"""Unit tests untuk modul siskamling.narrator (narasi deterministik)."""
 import unittest
 
-from siskamling.narrator import (
-    collect_allowed_numbers,
-    generate_fallback_narration,
-    validate_narration_grounding,
-)
+from siskamling.narrator import build_alert_detail, narrate, risk_emoji
 
 
-class TestNarrator(unittest.TestCase):
-    def test_collect_allowed_numbers(self):
-        payload = {
-            "symbol": "XYZ.JK",
-            "score": 85,
-            "reasons": ["naik >=25% dalam 5 hari"],
-            "features": {"return_1d": 0.25, "volume_ratio": 12.2},
-        }
-        allowed = collect_allowed_numbers(payload)
-        self.assertIn("85", allowed)
-        self.assertIn("25", allowed)
-        self.assertIn("5", allowed)
-        self.assertIn("12.2", allowed)
+class TestRiskEmoji(unittest.TestCase):
+    def test_thresholds(self):
+        self.assertEqual(risk_emoji(70), "🚨")
+        self.assertEqual(risk_emoji(40), "🟡")
+        self.assertEqual(risk_emoji(39), "🛡️")
 
-    def test_validate_narration_grounding_valid(self):
-        payload = {
-            "symbol": "BSWD.JK",
-            "score": 90,
-            "alasan": ["naik >=25% dalam 5 hari"],
-            "features": {"ret_1d": 0.25, "vol_ratio": 12.2},
-        }
-        text = "Laporan BSWD.JK skor 90, naik 25% dalam 5 hari, volume 12.2x."
-        is_valid, foreign = validate_narration_grounding(text, payload)
-        self.assertTrue(is_valid, f"Foreign numbers: {foreign}")
-        self.assertEqual(len(foreign), 0)
 
-    def test_validate_narration_grounding_rejects_hallucination(self):
-        payload = {
-            "symbol": "BSWD.JK",
-            "score": 90,
-            "alasan": ["naik >=25% dalam 5 hari"],
-        }
-        text = "Laporan BSWD.JK skor 90, target harga 7500 dan dividen 18.5%."
-        is_valid, foreign = validate_narration_grounding(text, payload)
-        self.assertFalse(is_valid)
-        self.assertIn("7500", foreign)
-        self.assertIn("18.5", foreign)
-
-    def test_generate_fallback_narration(self):
-        features = {"return_1d": 0.15, "volume_ratio": 3.5}
+class TestNarration(unittest.TestCase):
+    def test_narrate_includes_symbol_score_and_metrics(self):
+        features = {"return_1d": 0.15, "return_5d": 0.30, "return_20d": 0.45, "volume_ratio": 3.5, "position_90d": 0.9}
         reasons = ["volume >=2,5x rata-rata 20 hari"]
-        narration = generate_fallback_narration("UNSP.JK", 55, reasons, features)
+        narration = narrate("UNSP.JK", 55, reasons, features)
+
         self.assertIn("UNSP", narration)
         self.assertIn("55/100", narration)
-        self.assertIn("naik (+15.0%)", narration)
-        self.assertIn("3.5x", narration)
+        self.assertIn("+15.0% (1h)", narration)
+        self.assertIn("3.5x rata-rata 20 hari", narration)
+        self.assertIn("• Pemicu: volume >=2,5x rata-rata 20 hari", narration)
         self.assertIn("bukan saran investasi", narration)
+        self.assertNotIn(".JK", narration)
+
+    def test_narrate_supports_short_feature_aliases(self):
+        features = {"ret_1d": -0.05, "vol_ratio": 2.0}
+        narration = build_alert_detail("BBCA.JK", 20, [], features)
+
+        self.assertIn("−5.0% (1h)", narration)
+        self.assertIn("2.0x rata-rata 20 hari", narration)
+        self.assertIn("tidak ada indikasi risiko kuat", narration)
+
+    def test_narrate_marks_ninety_day_high(self):
+        features = {"position_90d": 1.0, "is_at_90d_high": True}
+        narration = narrate("AAAA.JK", 80, ["di puncak 90 hari"], features)
+        self.assertIn("(di puncak)", narration)
+        self.assertTrue(narration.startswith("🚨"))
 
 
 if __name__ == "__main__":

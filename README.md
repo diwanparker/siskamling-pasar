@@ -16,10 +16,7 @@ Buat investor ritel pemula yang gampang FOMO sama saham viral, Siskamling Pasar 
 │  Cron 16:30 │────▶│ Sectors API  │────▶│ Skor Teknikal │────▶│ Telegram │
 │  (Sn-Jum)   │     │ Top Gainers  │     │ Anti-Pom-Pom  │     │ Discord  │
 └─────────────┘     │ Daily OHLCV  │     │ (0-100)       │     └──────────┘
-                    └──────────────┘     │               │
-                                         │ LLM Narator   │
-                                         │ (opsional)    │
-                                         └───────────────┘
+                    └──────────────┘     └───────────────┘
 ```
 
 **Alur per run:**
@@ -30,7 +27,7 @@ Buat investor ritel pemula yang gampang FOMO sama saham viral, Siskamling Pasar 
    - Rasio volume vs rata-rata 20 hari
    - Posisi di rentang 90 hari (puncak?)
    - Gap naik, ekor atas panjang (ditolak di atas)
-4. Skor ≥ 40 → masuk radar. LLM merangkum dalam bahasa warga (validator memastikan angka sesuai data)
+4. Skor ≥ 40 → masuk radar. Laporan disusun deterministik jadi papan skor peringkat + bullet metrik tiap saham
 5. Kirim ke Telegram/Discord + simpan run manifest (bukti unattended run)
 
 ## Backtest
@@ -52,7 +49,7 @@ Diuji terhadap **24 saham yang disuspensi BEI** karena "peningkatan harga kumula
 - 🔔 **Broadcast harian** — otomatis tiap 16:30 WIB hari bursa
 - 🔍 **`/ronda TICKER`** — cek skor satu saham secara interaktif
 - 💬 **Multi-platform (Open/Closed)** — siaran & perintah `/ronda` jalan di **Telegram** *dan* **Discord**. Menambah platform baru cukup bikin satu subclass `Channel` + `@register_channel`, tanpa mengubah kode dispatch
-- 🤖 **LLM narator** — bahasa santai ala hansip, dengan validator angka
+- 📊 **Laporan terbaca** — papan skor peringkat + bullet metrik per saham, langsung enak dibaca di Telegram/Discord
 - 📋 **Run manifest** — JSON per run (timestamp, jumlah alert, error) sebagai bukti otomatis
 - 💾 **Cache disk** — hemat kredit API, data fundamental di-cache
 
@@ -107,7 +104,7 @@ siskamling-pasar/
 ├── siskamling/
 │   ├── sectors.py      # Client Sectors API v2 (stdlib, cache disk)
 │   ├── score.py        # Skor teknikal anti-pom-pom (deterministik)
-│   ├── narrator.py     # LLM narator + validator angka + fallback template
+│   ├── narrator.py     # Narator deterministik (bullet laporan, tanpa LLM)
 │   ├── backtest.py     # Point-in-time backtest vs suspensi BEI
 │   ├── bot.py          # Orkestrasi: skoring, broadcast, CLI
 │   └── platforms/      # Abstraksi kanal (Open/Closed Principle)
@@ -132,7 +129,6 @@ siskamling-pasar/
 
 - **Python 3** (stdlib saja, tanpa pip install)
 - **Sectors API v2** — OHLCV harian, top gainers, suspensi
-- **LLM** via OpenAI-compatible API (9router/dll) — opsional, ada fallback template
 - **Telegram Bot API** — broadcast + interaktif
 - **Discord Bot API + Gateway** — broadcast + slash command interaktif (WebSocket stdlib)
 - **Cron** — scheduler harian

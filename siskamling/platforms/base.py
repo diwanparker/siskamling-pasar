@@ -121,11 +121,17 @@ def build_report_messages(channel: Channel, triggered_alerts: list[dict[str, Any
             "Situasi pasar terpantau kondusif. Tidak ada saham mencurigakan pada jajaran top gainers hari ini."
         ]
 
+    ranked = sorted(triggered_alerts, key=lambda alert: -alert["score"])
+    scoreboard = "\n".join(
+        f"{rank}. {bold(alert['symbol'].replace('.JK', ''))} — {alert['score']}/100"
+        for rank, alert in enumerate(ranked, start=1)
+    )
     messages = [
         f"🔔 {bold(f'Laporan Ronda Sore — {date.today().isoformat()}')}\n\n"
-        f"Perhatian warga, terdeteksi {bold(f'{len(triggered_alerts)} saham')} masuk radar risiko:\n"
+        f"Perhatian warga, terdeteksi {bold(f'{len(ranked)} saham')} masuk radar risiko:\n\n"
+        f"{scoreboard}"
     ]
-    messages.extend(alert["narration"] for alert in sorted(triggered_alerts, key=lambda alert: -alert["score"]))
+    messages.extend(alert["narration"] for alert in ranked)
     return messages
 
 
