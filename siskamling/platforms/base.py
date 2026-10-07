@@ -369,6 +369,34 @@ def build_portfolio_messages(
     return chunks
 
 
+def _clean_narration(raw_narration: str) -> str:
+    """Bersihkan disclaimer bawaan dari narasi item agar tidak berulang sebelum footer."""
+    return raw_narration.replace("⚠️ Ini bukan saran investasi. Data dari Sectors.app.", "").strip()
+
+
+def _fit_narrations_into_budget(
+    header: str,
+    narrations: list[str],
+    current_length: int,
+    divider: str,
+    max_length: int = 3850,
+) -> tuple[str, int]:
+    """Saring narasi agar total panjang pesan tidak melampaui batas 1 bubble platform."""
+    included: list[str] = []
+    for narration in narrations:
+        est_len = current_length + sum(len(n) + len(divider) for n in included) + len(narration) + 120
+        if est_len <= max_length:
+            included.append(narration)
+        else:
+            break
+
+    omitted = len(narrations) - len(included)
+    content = header
+    if included:
+        content += f"{divider}{divider.join(included)}"
+    return content, omitted
+
+
 def build_unified_patrol_messages(
     channel: Channel,
     portfolio_items: list[dict[str, Any]],
@@ -380,7 +408,7 @@ def build_unified_patrol_messages(
     divider_sub = "\n\n───────────────────\n\n"
     section_divider = "\n\n═══════════════════\n\n"
     disclaimer = "\n\n⚠️ Ini bukan saran investasi. Data dari Sectors.app."
-    MAX_BUBBLE_LENGTH = 3850
+    max_bubble_length = 3850
 
     sections: list[str] = []
 
@@ -392,13 +420,8 @@ def build_unified_patrol_messages(
             for rank, item in enumerate(ranked_port, start=1)
         )
         port_header = f"📌 {bold(f'Radar Aset Pantauan Anda — {today_str}')}\n\n{scoreboard_port}"
-
-        clean_port_narrations = []
-        for item in ranked_port:
-            narration = item.get("narration", "").strip()
-            narration = narration.replace("⚠️ Ini bukan saran investasi. Data dari Sectors.app.", "").strip()
-            if narration:
-                clean_port_narrations.append(narration)
+        clean_port_narrations = [_clean_narration(item.get("narration", "")) for item in ranked_port if item.get("narration")]
+        clean_port_narrations = [n for n in clean_port_narrations if n]
 
         if clean_port_narrations:
             sections.append(f"{port_header}{divider_sub}{divider_sub.join(clean_port_narrations)}")
@@ -417,29 +440,13 @@ def build_unified_patrol_messages(
             f"Perhatian warga, terdeteksi {bold(f'{len(ranked_market)} saham')} top gainers masuk radar risiko:\n\n"
             f"{scoreboard_market}"
         )
-
-        clean_market_narrations = []
-        for item in ranked_market:
-            narration = item.get("narration", "").strip()
-            narration = narration.replace("⚠️ Ini bukan saran investasi. Data dari Sectors.app.", "").strip()
-            if narration:
-                clean_market_narrations.append(narration)
+        clean_market_narrations = [_clean_narration(item.get("narration", "")) for item in ranked_market if item.get("narration")]
+        clean_market_narrations = [n for n in clean_market_narrations if n]
 
         current_len = sum(len(s) for s in sections) + len(market_header) + len(disclaimer) + 100
-        included_narrations = []
-        omitted_count = 0
-
-        for narration in clean_market_narrations:
-            est_len = current_len + sum(len(n) + len(divider_sub) for n in included_narrations) + len(narration) + 120
-            if est_len <= MAX_BUBBLE_LENGTH:
-                included_narrations.append(narration)
-            else:
-                omitted_count = len(clean_market_narrations) - len(included_narrations)
-                break
-
-        market_content = market_header
-        if included_narrations:
-            market_content += f"{divider_sub}{divider_sub.join(included_narrations)}"
+        market_content, omitted_count = _fit_narrations_into_budget(
+            market_header, clean_market_narrations, current_len, divider_sub, max_bubble_length
+        )
         if omitted_count > 0:
             market_content += f"\n\nℹ️ {bold(f'(+{omitted_count} saham risiko lainnya tercatat pada scoreboard di atas. Cek detail via')} `/ronda TICKER`{bold(')')}"
 
@@ -466,7 +473,7 @@ def build_unified_morning_messages(
     divider_sub = "\n\n───────────────────\n\n"
     section_divider = "\n\n═══════════════════\n\n"
     disclaimer = "\n\n⚠️ Ini bukan saran investasi. Data dari Sectors.app."
-    MAX_BUBBLE_LENGTH = 3850
+    max_bubble_length = 3850
 
     sections: list[str] = []
 
@@ -483,13 +490,8 @@ def build_unified_morning_messages(
             for rank, item in enumerate(portfolio_items, start=1)
         )
         port_header = f"📌 {bold(f'Aset Pantauan Anda — Briefing {today_str}')}\n\n{scoreboard_port}"
-
-        clean_port_narrations = []
-        for item in portfolio_items:
-            narration = item.get("narration", "").strip()
-            narration = narration.replace("⚠️ Ini bukan saran investasi. Data dari Sectors.app.", "").strip()
-            if narration:
-                clean_port_narrations.append(narration)
+        clean_port_narrations = [_clean_narration(item.get("narration", "")) for item in portfolio_items if item.get("narration")]
+        clean_port_narrations = [n for n in clean_port_narrations if n]
 
         if clean_port_narrations:
             sections.append(f"{port_header}{divider_sub}{divider_sub.join(clean_port_narrations)}")
@@ -508,23 +510,13 @@ def build_unified_morning_messages(
             f"🌅 {bold(f'Briefing Pagi — {today_str}')}\n\n"
             f"Kandidat fundamental sehat ({bold(f'{len(ranked_market)} saham')}):\n\n{scoreboard_market}"
         )
-        clean_market_narrations = [item.get("narration", "").strip() for item in ranked_market]
+        clean_market_narrations = [_clean_narration(item.get("narration", "")) for item in ranked_market if item.get("narration")]
+        clean_market_narrations = [n for n in clean_market_narrations if n]
 
         current_len = sum(len(s) for s in sections) + len(market_header) + len(disclaimer) + 100
-        included_narrations = []
-        omitted_count = 0
-
-        for narration in clean_market_narrations:
-            est_len = current_len + sum(len(n) + len(divider_sub) for n in included_narrations) + len(narration) + 120
-            if est_len <= MAX_BUBBLE_LENGTH:
-                included_narrations.append(narration)
-            else:
-                omitted_count = len(clean_market_narrations) - len(included_narrations)
-                break
-
-        market_content = market_header
-        if included_narrations:
-            market_content += f"{divider_sub}{divider_sub.join(included_narrations)}"
+        market_content, omitted_count = _fit_narrations_into_budget(
+            market_header, clean_market_narrations, current_len, divider_sub, max_bubble_length
+        )
         if omitted_count > 0:
             market_content += f"\n\nℹ️ {bold(f'(+{omitted_count} kandidat lainnya tercatat pada scoreboard di atas)')}"
 
