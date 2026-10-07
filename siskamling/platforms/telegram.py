@@ -99,6 +99,12 @@ class TelegramChannel(InteractiveChannel):
                     if not text or not chat_id:
                         continue
 
+                    logger.info("Pesan Telegram masuk dari chat_id [%s]: %s", chat_id, text)
+
+                    if text.strip().split("@")[0].lower() in {"/id", "/chatid"}:
+                        self.send(chat_id, f"🆔 *Chat ID grup/chat ini:* `{chat_id}`\n(Gunakan ID ini untuk konfigurasi TELEGRAM_CHAT_ID)")
+                        continue
+
                     reply_sender = self._create_reply_sender(chat_id)
                     router.handle(text, ReplyContext(send=reply_sender, bold=self.bold))
             except KeyboardInterrupt:
