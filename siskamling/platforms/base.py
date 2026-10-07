@@ -322,7 +322,7 @@ def build_portfolio_messages(
     title: str,
     summary: Callable[[dict[str, Any]], str],
 ) -> list[str]:
-    """Susun section aset pantauan warga (per-user) memakai markup tebal kanal.
+    """Susun section aset pantauan warga (per-user) memakai markup tebal kanal menjadi 1 pesan/bubble terpadu.
 
     `items` masing-masing memuat `symbol` dan opsional `narration`; `summary`
     merangkum satu item menjadi baris singkat pada papan skor.
@@ -335,9 +335,38 @@ def build_portfolio_messages(
         f"{rank}. {bold(item['symbol'].replace('.JK', ''))} — {summary(item)}"
         for rank, item in enumerate(items, start=1)
     )
-    messages = [f"📌 {bold(title)}\n\n{scoreboard}"]
-    messages.extend(item["narration"] for item in items if item.get("narration"))
-    return messages
+    header = f"📌 {bold(title)}\n\n{scoreboard}"
+
+    clean_narrations = []
+    for item in items:
+        narration = item.get("narration", "").strip()
+        narration = narration.replace("⚠️ Ini bukan saran investasi. Data dari Sectors.app.", "").strip()
+        if narration:
+            clean_narrations.append(narration)
+
+    divider = "\n\n───────────────────\n\n"
+    disclaimer = "\n\n⚠️ Ini bukan saran investasi. Data dari Sectors.app."
+
+    if clean_narrations:
+        combined = f"{header}{divider}{divider.join(clean_narrations)}{disclaimer}"
+    else:
+        combined = f"{header}{disclaimer}"
+
+    if len(combined) <= 3900:
+        return [combined]
+
+    chunks = []
+    current_chunk = header
+    for item in clean_narrations:
+        candidate = f"{current_chunk}{divider}{item}"
+        if len(candidate) > 3800:
+            chunks.append(current_chunk)
+            current_chunk = item
+        else:
+            current_chunk = candidate
+    if current_chunk:
+        chunks.append(current_chunk + disclaimer)
+    return chunks
 
 
 def dispatch(channels: Iterable[Channel], build_messages: Callable[[Channel], list[str]]) -> None:

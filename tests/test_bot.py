@@ -30,10 +30,11 @@ class TestBroadcastManifest(unittest.TestCase):
         self.assertEqual(args[0], "/v2/companies/top-changes/")
         self.assertEqual(args[1]["n_stock"], 15)
 
+    @patch("siskamling.bot.get_all_portfolios", return_value={})
     @patch("siskamling.bot.dispatch_report")
     @patch("siskamling.bot.score_ticker")
     @patch("siskamling.bot.sectors.get")
-    def test_execute_daily_broadcast_dispatches_triggered_alerts(self, mock_sectors_get, mock_score, mock_dispatch):
+    def test_execute_daily_broadcast_dispatches_triggered_alerts(self, mock_sectors_get, mock_score, mock_dispatch, _mock_portfolios):
         mock_sectors_get.return_value = {"top_gainers": {"1d": [{"symbol": "AAA.JK"}]}}
         mock_score.return_value = {"symbol": "AAA.JK", "score": 80, "narration": "bahaya"}
 
@@ -69,10 +70,11 @@ class TestMorningBrief(unittest.TestCase):
             "financials": {"historical_financials": [{"year": 2024, "earnings": earnings}]},
         }
 
+    @patch("siskamling.bot.get_all_portfolios", return_value={})
     @patch("siskamling.bot.dispatch_briefing")
     @patch("siskamling.bot.sectors.company_report")
     @patch("siskamling.bot.sectors.screener")
-    def test_screens_and_ranks_candidates(self, mock_screener, mock_report, mock_dispatch):
+    def test_screens_and_ranks_candidates(self, mock_screener, mock_report, mock_dispatch, _mock_portfolios):
         mock_screener.return_value = [{"symbol": "AAA.JK"}, {"symbol": "BBB.JK"}, {"symbol": "CCC.JK"}]
         reports = {
             "AAA.JK": self._report(sector="Banks", market_cap=1e12, forward_pe=10.0, dividend_yield=0.06, earnings=1e11),
@@ -93,10 +95,11 @@ class TestMorningBrief(unittest.TestCase):
         dispatched = mock_dispatch.call_args.args[1]
         self.assertEqual(dispatched[0]["symbol"], "BBB.JK")
 
+    @patch("siskamling.bot.get_all_portfolios", return_value={})
     @patch("siskamling.bot.dispatch_briefing")
     @patch("siskamling.bot.sectors.company_report")
     @patch("siskamling.bot.sectors.screener")
-    def test_rejects_overpriced_and_low_yield(self, mock_screener, mock_report, mock_dispatch):
+    def test_rejects_overpriced_and_low_yield(self, mock_screener, mock_report, mock_dispatch, _mock_portfolios):
         mock_screener.return_value = [{"symbol": "AAA.JK"}, {"symbol": "BBB.JK"}]
         reports = {
             "AAA.JK": self._report(sector="Banks", market_cap=1e12, forward_pe=40.0, dividend_yield=0.06, earnings=1e11),

@@ -104,12 +104,12 @@ class TestBuildPortfolioMessages(unittest.TestCase):
             RecordingChannel(), items, "Radar Aset Anda", lambda item: f"Skor {item['score']}/100"
         )
 
-        self.assertEqual(len(messages), 3)
+        self.assertEqual(len(messages), 1)
         self.assertIn("Radar Aset Anda", messages[0])
         self.assertIn("**BBCA**", messages[0])
         self.assertIn("Skor 75/100", messages[0])
-        self.assertEqual(messages[1], "narasi-bbca")
-        self.assertEqual(messages[2], "narasi-bbri")
+        self.assertIn("narasi-bbca", messages[0])
+        self.assertIn("narasi-bbri", messages[0])
 
     def test_empty_items_returns_no_message(self):
         self.assertEqual(build_portfolio_messages(RecordingChannel(), [], "t", lambda item: ""), [])
