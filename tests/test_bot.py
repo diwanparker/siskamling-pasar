@@ -8,6 +8,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from siskamling.bot import _extract_fundamental_metrics, execute_daily_broadcast, execute_morning_brief
+from siskamling.platforms import PlainTextChannel
 from siskamling.sectors import SectorsError
 
 # Arahkan manifest & log otomasi ke temp dir agar test tidak menulis ke runs/ dan logs/ repo.
@@ -200,6 +201,11 @@ class TestWatchlistPatrol(unittest.TestCase):
         args, kwargs = mock_direct.call_args
         self.assertEqual(args[1], "111")
         self.assertEqual(kwargs["platform"], "telegram")
+        output_messages = args[2](PlainTextChannel())
+        self.assertEqual(len(output_messages), 1)
+        self.assertIn("Radar Aset Pantauan Anda", output_messages[0])
+        self.assertIn("Laporan Ronda Sore", output_messages[0])
+        self.assertLess(output_messages[0].index("Radar Aset Pantauan Anda"), output_messages[0].index("Laporan Ronda Sore"))
 
     @patch("siskamling.bot.dispatch_direct")
     @patch("siskamling.bot.dispatch_report")
@@ -272,6 +278,11 @@ class TestWatchlistBriefing(unittest.TestCase):
         self.assertEqual(manifest["portfolio_stocks_scanned"], 1)
         self.assertEqual(mock_direct.call_count, 1)
         self.assertEqual(mock_direct.call_args.args[1], "111")
+        output_messages = mock_direct.call_args.args[2](PlainTextChannel())
+        self.assertEqual(len(output_messages), 1)
+        self.assertIn("Aset Pantauan Anda", output_messages[0])
+        self.assertIn("Briefing Pagi", output_messages[0])
+        self.assertLess(output_messages[0].index("Aset Pantauan Anda"), output_messages[0].index("Briefing Pagi"))
 
     @patch("siskamling.bot.dispatch_direct")
     @patch("siskamling.bot.dispatch_briefing")

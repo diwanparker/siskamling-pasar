@@ -16,6 +16,8 @@ from siskamling.platforms.base import (
     build_briefing_messages,
     build_portfolio_messages,
     build_report_messages,
+    build_unified_morning_messages,
+    build_unified_patrol_messages,
     dispatch_direct,
     dispatch_report,
 )
@@ -113,6 +115,43 @@ class TestBuildPortfolioMessages(unittest.TestCase):
 
     def test_empty_items_returns_no_message(self):
         self.assertEqual(build_portfolio_messages(RecordingChannel(), [], "t", lambda item: ""), [])
+
+
+class TestBuildUnifiedMessages(unittest.TestCase):
+    def test_patrol_puts_assets_first_in_single_bubble(self):
+        portfolio = [
+            {"symbol": "GOTO.JK", "score": 42, "narration": "narasi-goto"},
+            {"symbol": "BBCA.JK", "score": 0, "narration": "narasi-bbca"},
+        ]
+        market_alerts = [
+            {"symbol": "BUMI.JK", "score": 85, "narration": "narasi-bumi"}
+        ]
+        messages = build_unified_patrol_messages(RecordingChannel(), portfolio, market_alerts)
+        self.assertEqual(len(messages), 1)
+        idx_aset = messages[0].index("Radar Aset Pantauan Anda")
+        idx_pasar = messages[0].index("Laporan Ronda Sore")
+        self.assertLess(idx_aset, idx_pasar)
+        self.assertIn("**GOTO**", messages[0])
+        self.assertIn("narasi-goto", messages[0])
+        self.assertIn("**BUMI**", messages[0])
+        self.assertIn("narasi-bumi", messages[0])
+
+    def test_morning_puts_assets_first_in_single_bubble(self):
+        portfolio = [
+            {"symbol": "BBCA.JK", "dividend_yield": 0.062, "narration": "narasi-bbca-div"},
+        ]
+        market_candidates = [
+            {"symbol": "ITMG.JK", "dividend_yield": 0.15, "narration": "narasi-itmg"}
+        ]
+        messages = build_unified_morning_messages(RecordingChannel(), portfolio, market_candidates)
+        self.assertEqual(len(messages), 1)
+        idx_aset = messages[0].index("Aset Pantauan Anda")
+        idx_pasar = messages[0].index("Briefing Pagi")
+        self.assertLess(idx_aset, idx_pasar)
+        self.assertIn("**BBCA**", messages[0])
+        self.assertIn("narasi-bbca-div", messages[0])
+        self.assertIn("**ITMG**", messages[0])
+        self.assertIn("narasi-itmg", messages[0])
 
 
 class TestDispatchDirect(unittest.TestCase):

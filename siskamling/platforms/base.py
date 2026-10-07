@@ -369,6 +369,170 @@ def build_portfolio_messages(
     return chunks
 
 
+def build_unified_patrol_messages(
+    channel: Channel,
+    portfolio_items: list[dict[str, Any]],
+    market_alerts: list[dict[str, Any]],
+) -> list[str]:
+    """Susun laporan patroli sore terpadu: ASET KELUAR PERTAMA, lalu disusul laporan pasar dalam 1 bubble chat."""
+    bold = channel.bold
+    today_str = date.today().isoformat()
+    sections: list[str] = []
+
+    # 1. ASSET WARGA KELUAR PERTAMA
+    if portfolio_items:
+        ranked_port = sorted(portfolio_items, key=lambda a: -a.get("score", 0))
+        scoreboard_port = "\n".join(
+            f"{rank}. {bold(item['symbol'].replace('.JK', ''))} — Skor {item.get('score', 0)}/100"
+            for rank, item in enumerate(ranked_port, start=1)
+        )
+        port_header = f"📌 {bold(f'Radar Aset Pantauan Anda — {today_str}')}\n\n{scoreboard_port}"
+
+        clean_port_narrations = []
+        for item in ranked_port:
+            narration = item.get("narration", "").strip()
+            narration = narration.replace("⚠️ Ini bukan saran investasi. Data dari Sectors.app.", "").strip()
+            if narration:
+                clean_port_narrations.append(narration)
+
+        divider_sub = "\n\n───────────────────\n\n"
+        if clean_port_narrations:
+            sections.append(f"{port_header}{divider_sub}{divider_sub.join(clean_port_narrations)}")
+        else:
+            sections.append(port_header)
+
+    # 2. LAPORAN PASAR RONDA SORE
+    if market_alerts:
+        ranked_market = sorted(market_alerts, key=lambda a: -a.get("score", 0))
+        scoreboard_market = "\n".join(
+            f"{rank}. {bold(alert['symbol'].replace('.JK', ''))} — {alert['score']}/100"
+            for rank, alert in enumerate(ranked_market, start=1)
+        )
+        market_header = (
+            f"🔔 {bold(f'Laporan Ronda Sore — {today_str}')}\n\n"
+            f"Perhatian warga, terdeteksi {bold(f'{len(ranked_market)} saham')} top gainers masuk radar risiko:\n\n"
+            f"{scoreboard_market}"
+        )
+        clean_market_narrations = []
+        for item in ranked_market:
+            narration = item.get("narration", "").strip()
+            narration = narration.replace("⚠️ Ini bukan saran investasi. Data dari Sectors.app.", "").strip()
+            if narration:
+                clean_market_narrations.append(narration)
+
+        divider_sub = "\n\n───────────────────\n\n"
+        if clean_market_narrations:
+            sections.append(f"{market_header}{divider_sub}{divider_sub.join(clean_market_narrations)}")
+        else:
+            sections.append(market_header)
+    else:
+        market_header = (
+            f"🛡️ {bold(f'Laporan Ronda Sore — {today_str}')}\n\n"
+            "Situasi pasar terpantau kondusif. Tidak ada saham mencurigakan pada jajaran top gainers hari ini."
+        )
+        sections.append(market_header)
+
+    section_divider = "\n\n═══════════════════\n\n"
+    disclaimer = "\n\n⚠️ Ini bukan saran investasi. Data dari Sectors.app."
+
+    combined = f"{section_divider.join(sections)}{disclaimer}"
+    if len(combined) <= 3900:
+        return [combined]
+
+    chunks = []
+    current_chunk = sections[0]
+    for sec in sections[1:]:
+        candidate = f"{current_chunk}{section_divider}{sec}"
+        if len(candidate) > 3800:
+            chunks.append(current_chunk)
+            current_chunk = sec
+        else:
+            current_chunk = candidate
+    if current_chunk:
+        chunks.append(current_chunk + disclaimer)
+    return chunks
+
+
+def build_unified_morning_messages(
+    channel: Channel,
+    portfolio_items: list[dict[str, Any]],
+    market_candidates: list[dict[str, Any]],
+) -> list[str]:
+    """Susun briefing pagi terpadu: ASET KELUAR PERTAMA, lalu disusul kandidat fundamental bursa dalam 1 bubble chat."""
+    bold = channel.bold
+    today_str = date.today().isoformat()
+    sections: list[str] = []
+
+    # 1. ASSET WARGA KELUAR PERTAMA
+    if portfolio_items:
+        def _div_yield(item: dict[str, Any]) -> str:
+            y = item.get("dividend_yield")
+            if isinstance(y, (int, float)):
+                return f"Dividen {y * 100:.1f}%" if y < 1.0 else f"Dividen {y:.1f}%"
+            return "Dividen n/a"
+
+        scoreboard_port = "\n".join(
+            f"{rank}. {bold(item['symbol'].replace('.JK', ''))} — {_div_yield(item)}"
+            for rank, item in enumerate(portfolio_items, start=1)
+        )
+        port_header = f"📌 {bold(f'Aset Pantauan Anda — Briefing {today_str}')}\n\n{scoreboard_port}"
+
+        clean_port_narrations = []
+        for item in portfolio_items:
+            narration = item.get("narration", "").strip()
+            narration = narration.replace("⚠️ Ini bukan saran investasi. Data dari Sectors.app.", "").strip()
+            if narration:
+                clean_port_narrations.append(narration)
+
+        divider_sub = "\n\n───────────────────\n\n"
+        if clean_port_narrations:
+            sections.append(f"{port_header}{divider_sub}{divider_sub.join(clean_port_narrations)}")
+        else:
+            sections.append(port_header)
+
+    # 2. BRIEFING PAGI (KANDIDAT FUNDAMENTAL BURSA)
+    if market_candidates:
+        ranked_market = sorted(market_candidates, key=lambda item: -(item.get("dividend_yield") or 0))
+        scoreboard_market = "\n".join(
+            f"{rank}. {bold(item['symbol'].replace('.JK', ''))} — yield "
+            f"{(item.get('dividend_yield') or 0) * 100:.1f}%"
+            for rank, item in enumerate(ranked_market, start=1)
+        )
+        market_header = (
+            f"🌅 {bold(f'Briefing Pagi — {today_str}')}\n\n"
+            f"Kandidat fundamental sehat ({bold(f'{len(ranked_market)} saham')}):\n\n{scoreboard_market}"
+        )
+        clean_market_narrations = [item.get("narration", "").strip() for item in ranked_market]
+        divider_sub = "\n\n───────────────────\n\n"
+        sections.append(f"{market_header}{divider_sub}{divider_sub.join(clean_market_narrations)}")
+    else:
+        market_header = (
+            f"🌅 {bold(f'Briefing Pagi — {today_str}')}\n\n"
+            "Tidak ada kandidat fundamental yang lolos kriteria hari ini."
+        )
+        sections.append(market_header)
+
+    section_divider = "\n\n═══════════════════\n\n"
+    disclaimer = "\n\n⚠️ Ini bukan saran investasi. Data dari Sectors.app."
+
+    combined = f"{section_divider.join(sections)}{disclaimer}"
+    if len(combined) <= 3900:
+        return [combined]
+
+    chunks = []
+    current_chunk = sections[0]
+    for sec in sections[1:]:
+        candidate = f"{current_chunk}{section_divider}{sec}"
+        if len(candidate) > 3800:
+            chunks.append(current_chunk)
+            current_chunk = sec
+        else:
+            current_chunk = candidate
+    if current_chunk:
+        chunks.append(current_chunk + disclaimer)
+    return chunks
+
+
 def dispatch(channels: Iterable[Channel], build_messages: Callable[[Channel], list[str]]) -> None:
     """Siarkan kumpulan pesan (dibangun per-kanal) ke seluruh kanal terkonfigurasi."""
     for channel in channels:

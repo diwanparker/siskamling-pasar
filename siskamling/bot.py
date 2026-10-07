@@ -29,6 +29,8 @@ from .platforms import (
     build_briefing_messages,
     build_portfolio_messages,
     build_report_messages,
+    build_unified_morning_messages,
+    build_unified_patrol_messages,
     dispatch_briefing,
     dispatch_direct,
     dispatch_report,
@@ -346,15 +348,11 @@ def execute_daily_broadcast(
 
     messages = build_report_messages(PLAIN_TEXT_CHANNEL, triggered_alerts)
 
-    if not dry_run:
-        # Fan-out ke seluruh kanal notifikasi yang terkonfigurasi (Telegram, Discord, ...).
-        # Tidak ada kanal terkonfigurasi → aman, tidak ada yang dikirim.
-        dispatch_report(all_channels(), triggered_alerts)
-
-    # Evaluasi Portofolio Warga: skor SEMUA aset yang diikuti, kirim section per-warga.
+    # Evaluasi Portofolio Warga: skor SEMUA aset yang diikuti, kirim section terpadu per-warga (ASET PERTAMA).
     user_portfolios = get_all_portfolios()
     portfolio_alerts: dict[str, list[dict[str, Any]]] = {}
     portfolio_stocks_scanned = 0
+    handled_recipients: set[str] = set()
 
     if user_portfolios:
         unique_tickers = {t for tickers in user_portfolios.values() for t in tickers}
@@ -375,13 +373,26 @@ def execute_daily_broadcast(
             if risky:
                 portfolio_alerts[user_key] = risky
 
+            platform, recipient = parse_user_key(user_key)
+            if recipient:
+                handled_recipients.add(recipient)
+
             if not dry_run:
                 _dispatch_user_watchlist(
                     user_key,
                     assets,
-                    title=f"Radar Aset Pantauan Anda — {date.today().isoformat()}",
-                    summary=lambda asset: f"Skor {asset['score']}/100",
+                    market_items=triggered_alerts,
+                    pipeline="patrol",
                 )
+
+    if not dry_run:
+        # Fan-out ke kanal notifikasi yang belum menerima laporan terpadu per-user
+        broadcast_channels = [
+            ch for ch in all_channels()
+            if ch.default_recipient() not in handled_recipients
+        ]
+        if broadcast_channels:
+            dispatch_report(broadcast_channels, triggered_alerts)
 
     run_manifest = _build_manifest(
         start_timestamp,
@@ -398,15 +409,30 @@ def execute_daily_broadcast(
 def _dispatch_user_watchlist(
     user_key: str,
     assets: list[dict[str, Any]],
-    title: str,
-    summary: Callable[[dict[str, Any]], str],
+    title: str = "",
+    summary: Callable[[dict[str, Any]], str] | None = None,
+    *,
+    market_items: list[dict[str, Any]] | None = None,
+    pipeline: str = "patrol",
 ) -> None:
-    """Kirim section aset pantauan ke kanal asal warga saja (Telegram/Discord), bukan ke channel umum."""
+    """Kirim section aset pantauan ke kanal asal warga saja (Telegram/Discord), dengan aset keluar PERTAMA dalam 1 bubble terpadu."""
     platform, recipient = parse_user_key(user_key)
+    if not recipient:
+        return
+
+    def _builder(channel: Any) -> list[str]:
+        if pipeline == "patrol" and market_items is not None:
+            return build_unified_patrol_messages(channel, assets, market_items)
+        elif pipeline == "morning-brief" and market_items is not None:
+            return build_unified_morning_messages(channel, assets, market_items)
+        resolved_title = title or f"Radar Aset Pantauan Anda — {date.today().isoformat()}"
+        resolved_summary = summary or (lambda a: f"Skor {a.get('score', 0)}/100")
+        return build_portfolio_messages(channel, assets, resolved_title, resolved_summary)
+
     dispatch_direct(
         all_channels(),
         recipient,
-        lambda channel: build_portfolio_messages(channel, assets, title, summary),
+        _builder,
         platform=platform,
     )
 
@@ -419,11 +445,15 @@ def _watchlist_dividend_summary(asset: dict[str, Any]) -> str:
     return "Dividen n/a"
 
 
-def _dispatch_watchlist_fundamentals(encountered_errors: list[str], dry_run: bool) -> int:
-    """Tarik fundamental seluruh aset warga lalu kirim section per-warga; kembalikan jumlah ticker unik."""
+def _dispatch_watchlist_fundamentals(
+    encountered_errors: list[str],
+    dry_run: bool,
+    market_candidates: list[dict[str, Any]] | None = None,
+) -> tuple[int, set[str]]:
+    """Tarik fundamental seluruh aset warga lalu kirim laporan terpadu per-warga; kembalikan (jumlah ticker, handled recipients)."""
     user_portfolios = get_all_portfolios()
     if not user_portfolios:
-        return 0
+        return 0, set()
 
     unique_tickers = {t for tickers in user_portfolios.values() for t in tickers}
 
@@ -436,19 +466,23 @@ def _dispatch_watchlist_fundamentals(encountered_errors: list[str], dry_run: boo
         except Exception as error:  # Defensive catch: satu aset gagal tak menggagalkan briefing
             encountered_errors.append(f"{ticker}: {error}")
 
+    handled_recipients: set[str] = set()
     for user_key, user_tickers in user_portfolios.items():
         assets = [fundamentals[t] for t in user_tickers if t in fundamentals]
         if not assets:
             continue
+        platform, recipient = parse_user_key(user_key)
+        if recipient:
+            handled_recipients.add(recipient)
         if not dry_run:
             _dispatch_user_watchlist(
                 user_key,
                 assets,
-                title=f"Aset Pantauan Anda — Briefing {date.today().isoformat()}",
-                summary=_watchlist_dividend_summary,
+                market_items=market_candidates or [],
+                pipeline="morning-brief",
             )
 
-    return len(unique_tickers)
+    return len(unique_tickers), handled_recipients
 
 
 from dataclasses import dataclass
@@ -617,12 +651,19 @@ def execute_morning_brief(
 
     messages = build_briefing_messages(PLAIN_TEXT_CHANNEL, selected)
 
-    if not dry_run:
-        # Fan-out ke seluruh kanal notifikasi yang terkonfigurasi (Telegram, Discord, ...).
-        dispatch_briefing(all_channels(), selected)
+    # Tampilkan info fundamental seluruh aset yang diikuti warga (disatukan dengan briefing pagi, ASET PERTAMA).
+    portfolio_stocks_scanned, handled_recipients = _dispatch_watchlist_fundamentals(
+        encountered_errors, dry_run, market_candidates=selected
+    )
 
-    # Tampilkan info fundamental seluruh aset yang diikuti warga (section terpisah per-warga).
-    portfolio_stocks_scanned = _dispatch_watchlist_fundamentals(encountered_errors, dry_run)
+    if not dry_run:
+        # Fan-out ke kanal notifikasi yang belum menerima laporan terpadu per-user
+        broadcast_channels = [
+            ch for ch in all_channels()
+            if ch.default_recipient() not in handled_recipients
+        ]
+        if broadcast_channels:
+            dispatch_briefing(broadcast_channels, selected)
 
     manifest = _build_briefing_manifest(
         start_timestamp,
