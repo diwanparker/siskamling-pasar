@@ -29,7 +29,8 @@ class TelegramChannel(InteractiveChannel):
         return os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
     def is_configured(self) -> bool:
-        return bool(self.token())
+        token = self.token()
+        return bool(token) and not token.startswith("isi_") and token != "123456:ABC-DEF"
 
     def default_recipient(self) -> str:
         return self.chat_id()

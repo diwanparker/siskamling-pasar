@@ -71,7 +71,8 @@ class DiscordChannel(InteractiveChannel):
         return os.environ.get("DISCORD_GUILD_ID", "").strip()
 
     def is_configured(self) -> bool:
-        return bool(self.token())
+        token = self.token()
+        return bool(token) and not token.startswith("isi_")
 
     def default_recipient(self) -> str:
         return self.channel_id()
