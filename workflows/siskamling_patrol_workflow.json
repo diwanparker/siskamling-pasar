@@ -61,7 +61,7 @@
             {
               "id": "api_base_url",
               "name": "api_base_url",
-              "value": "http://172.18.0.1:8000",
+              "value": "http://127.0.0.1:8000",
               "type": "string"
             },
             {
@@ -100,7 +100,7 @@
             {
               "id": "api_base_url",
               "name": "api_base_url",
-              "value": "http://172.18.0.1:8000",
+              "value": "http://127.0.0.1:8000",
               "type": "string"
             },
             {
