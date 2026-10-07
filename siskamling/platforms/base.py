@@ -374,12 +374,17 @@ def build_unified_patrol_messages(
     portfolio_items: list[dict[str, Any]],
     market_alerts: list[dict[str, Any]],
 ) -> list[str]:
-    """Susun laporan patroli sore terpadu: ASET KELUAR PERTAMA, lalu disusul laporan pasar dalam 1 bubble chat."""
+    """Susun laporan patroli sore terpadu: ASET KELUAR PERTAMA, lalu disusul laporan pasar, DIJAMIN 1 BUBBLE CHAT."""
     bold = channel.bold
     today_str = date.today().isoformat()
+    divider_sub = "\n\n───────────────────\n\n"
+    section_divider = "\n\n═══════════════════\n\n"
+    disclaimer = "\n\n⚠️ Ini bukan saran investasi. Data dari Sectors.app."
+    MAX_BUBBLE_LENGTH = 3850
+
     sections: list[str] = []
 
-    # 1. ASSET WARGA KELUAR PERTAMA
+    # 1. ASSET WARGA KELUAR PERTAMA (PRIORITAS UTAMA - LENGKAP)
     if portfolio_items:
         ranked_port = sorted(portfolio_items, key=lambda a: -a.get("score", 0))
         scoreboard_port = "\n".join(
@@ -395,13 +400,12 @@ def build_unified_patrol_messages(
             if narration:
                 clean_port_narrations.append(narration)
 
-        divider_sub = "\n\n───────────────────\n\n"
         if clean_port_narrations:
             sections.append(f"{port_header}{divider_sub}{divider_sub.join(clean_port_narrations)}")
         else:
             sections.append(port_header)
 
-    # 2. LAPORAN PASAR RONDA SORE
+    # 2. LAPORAN PASAR RONDA SORE (SMART COMPRESSION AGAR TETAP 1 BUBBLE)
     if market_alerts:
         ranked_market = sorted(market_alerts, key=lambda a: -a.get("score", 0))
         scoreboard_market = "\n".join(
@@ -413,6 +417,7 @@ def build_unified_patrol_messages(
             f"Perhatian warga, terdeteksi {bold(f'{len(ranked_market)} saham')} top gainers masuk radar risiko:\n\n"
             f"{scoreboard_market}"
         )
+
         clean_market_narrations = []
         for item in ranked_market:
             narration = item.get("narration", "").strip()
@@ -420,11 +425,25 @@ def build_unified_patrol_messages(
             if narration:
                 clean_market_narrations.append(narration)
 
-        divider_sub = "\n\n───────────────────\n\n"
-        if clean_market_narrations:
-            sections.append(f"{market_header}{divider_sub}{divider_sub.join(clean_market_narrations)}")
-        else:
-            sections.append(market_header)
+        current_len = sum(len(s) for s in sections) + len(market_header) + len(disclaimer) + 100
+        included_narrations = []
+        omitted_count = 0
+
+        for narration in clean_market_narrations:
+            est_len = current_len + sum(len(n) + len(divider_sub) for n in included_narrations) + len(narration) + 120
+            if est_len <= MAX_BUBBLE_LENGTH:
+                included_narrations.append(narration)
+            else:
+                omitted_count = len(clean_market_narrations) - len(included_narrations)
+                break
+
+        market_content = market_header
+        if included_narrations:
+            market_content += f"{divider_sub}{divider_sub.join(included_narrations)}"
+        if omitted_count > 0:
+            market_content += f"\n\nℹ️ {bold(f'(+{omitted_count} saham risiko lainnya tercatat pada scoreboard di atas. Cek detail via')} `/ronda TICKER`{bold(')')}"
+
+        sections.append(market_content)
     else:
         market_header = (
             f"🛡️ {bold(f'Laporan Ronda Sore — {today_str}')}\n\n"
@@ -432,25 +451,8 @@ def build_unified_patrol_messages(
         )
         sections.append(market_header)
 
-    section_divider = "\n\n═══════════════════\n\n"
-    disclaimer = "\n\n⚠️ Ini bukan saran investasi. Data dari Sectors.app."
-
     combined = f"{section_divider.join(sections)}{disclaimer}"
-    if len(combined) <= 3900:
-        return [combined]
-
-    chunks = []
-    current_chunk = sections[0]
-    for sec in sections[1:]:
-        candidate = f"{current_chunk}{section_divider}{sec}"
-        if len(candidate) > 3800:
-            chunks.append(current_chunk)
-            current_chunk = sec
-        else:
-            current_chunk = candidate
-    if current_chunk:
-        chunks.append(current_chunk + disclaimer)
-    return chunks
+    return [combined]
 
 
 def build_unified_morning_messages(
@@ -458,12 +460,17 @@ def build_unified_morning_messages(
     portfolio_items: list[dict[str, Any]],
     market_candidates: list[dict[str, Any]],
 ) -> list[str]:
-    """Susun briefing pagi terpadu: ASET KELUAR PERTAMA, lalu disusul kandidat fundamental bursa dalam 1 bubble chat."""
+    """Susun briefing pagi terpadu: ASET KELUAR PERTAMA, lalu disusul kandidat fundamental bursa, DIJAMIN 1 BUBBLE CHAT."""
     bold = channel.bold
     today_str = date.today().isoformat()
+    divider_sub = "\n\n───────────────────\n\n"
+    section_divider = "\n\n═══════════════════\n\n"
+    disclaimer = "\n\n⚠️ Ini bukan saran investasi. Data dari Sectors.app."
+    MAX_BUBBLE_LENGTH = 3850
+
     sections: list[str] = []
 
-    # 1. ASSET WARGA KELUAR PERTAMA
+    # 1. ASSET WARGA KELUAR PERTAMA (PRIORITAS UTAMA - LENGKAP)
     if portfolio_items:
         def _div_yield(item: dict[str, Any]) -> str:
             y = item.get("dividend_yield")
@@ -484,13 +491,12 @@ def build_unified_morning_messages(
             if narration:
                 clean_port_narrations.append(narration)
 
-        divider_sub = "\n\n───────────────────\n\n"
         if clean_port_narrations:
             sections.append(f"{port_header}{divider_sub}{divider_sub.join(clean_port_narrations)}")
         else:
             sections.append(port_header)
 
-    # 2. BRIEFING PAGI (KANDIDAT FUNDAMENTAL BURSA)
+    # 2. BRIEFING PAGI (KANDIDAT FUNDAMENTAL BURSA - SMART COMPRESSION)
     if market_candidates:
         ranked_market = sorted(market_candidates, key=lambda item: -(item.get("dividend_yield") or 0))
         scoreboard_market = "\n".join(
@@ -503,8 +509,26 @@ def build_unified_morning_messages(
             f"Kandidat fundamental sehat ({bold(f'{len(ranked_market)} saham')}):\n\n{scoreboard_market}"
         )
         clean_market_narrations = [item.get("narration", "").strip() for item in ranked_market]
-        divider_sub = "\n\n───────────────────\n\n"
-        sections.append(f"{market_header}{divider_sub}{divider_sub.join(clean_market_narrations)}")
+
+        current_len = sum(len(s) for s in sections) + len(market_header) + len(disclaimer) + 100
+        included_narrations = []
+        omitted_count = 0
+
+        for narration in clean_market_narrations:
+            est_len = current_len + sum(len(n) + len(divider_sub) for n in included_narrations) + len(narration) + 120
+            if est_len <= MAX_BUBBLE_LENGTH:
+                included_narrations.append(narration)
+            else:
+                omitted_count = len(clean_market_narrations) - len(included_narrations)
+                break
+
+        market_content = market_header
+        if included_narrations:
+            market_content += f"{divider_sub}{divider_sub.join(included_narrations)}"
+        if omitted_count > 0:
+            market_content += f"\n\nℹ️ {bold(f'(+{omitted_count} kandidat lainnya tercatat pada scoreboard di atas)')}"
+
+        sections.append(market_content)
     else:
         market_header = (
             f"🌅 {bold(f'Briefing Pagi — {today_str}')}\n\n"
@@ -512,25 +536,8 @@ def build_unified_morning_messages(
         )
         sections.append(market_header)
 
-    section_divider = "\n\n═══════════════════\n\n"
-    disclaimer = "\n\n⚠️ Ini bukan saran investasi. Data dari Sectors.app."
-
     combined = f"{section_divider.join(sections)}{disclaimer}"
-    if len(combined) <= 3900:
-        return [combined]
-
-    chunks = []
-    current_chunk = sections[0]
-    for sec in sections[1:]:
-        candidate = f"{current_chunk}{section_divider}{sec}"
-        if len(candidate) > 3800:
-            chunks.append(current_chunk)
-            current_chunk = sec
-        else:
-            current_chunk = candidate
-    if current_chunk:
-        chunks.append(current_chunk + disclaimer)
-    return chunks
+    return [combined]
 
 
 def dispatch(channels: Iterable[Channel], build_messages: Callable[[Channel], list[str]]) -> None:
