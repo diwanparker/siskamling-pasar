@@ -64,6 +64,7 @@ Diuji terhadap **24 saham yang disuspensi BEI** karena "peningkatan harga kumula
 - 💬 **Multi-platform (Open/Closed)** — siaran & perintah `/ronda` jalan di **Telegram** _dan_ **Discord**. Menambah platform baru cukup bikin satu subclass `Channel` + `@register_channel`, tanpa mengubah kode dispatch
 - 📊 **Laporan terbaca** — papan skor peringkat + bullet metrik, langsung enak dibaca di Telegram/Discord
 - 📋 **Run manifest** — JSON per run (timestamp, jumlah alert/kandidat, error) sebagai bukti otomatis
+- 🧾 **Log otomasi** — `logs/automation.jsonl` (append-only, ikut di-commit) mencatat tiap run terjadwal: waktu, pipeline, trigger (cron/api/manual), run_id, dan ringkasan hasil
 
 ## Setup
 
@@ -139,6 +140,19 @@ Workflow memanggil **HTTP API** Siskamling (bukan subprocess). Pastikan server A
 4. Buka node **Configuration** / **Configuration Morning Brief** untuk menyesuaikan `api_base_url`, `alert_threshold`, `n_gainers`, `n_candidates`, `max_pe`, `min_dividend_yield` tanpa menyentuh kode.
 5. Klik **Publish / Activate** untuk scheduler otomatis (08:30 & 16:30 WIB), atau **Test Patrol On-Demand** untuk eksekusi langsung.
 
+## Bukti Otomasi (Log Unattended Run)
+
+Setiap pipeline selesai — dipicu **cron**, **n8n** (lewat HTTP API), maupun manual — bot menulis **satu baris JSON** ke `logs/automation.jsonl` (append-only):
+
+```json
+{"logged_at": "2026-10-07T09:30:00+00:00", "pipeline": "morning-brief", "trigger": "cron", "dry_run": false, "run_id": "a1b2c3d4e5f6", "started_at": "...", "finished_at": "...", "duration_seconds": 4.21, "summary": {"n_universe_scanned": 30, "n_candidates": 3, "portfolio_stocks_scanned": 5, "n_errors": 0}}
+```
+
+- `trigger` bernilai `cron` (crontab), `api` (n8n / HTTP), atau `manual`.
+- Berkas ini **sengaja TIDAK di-gitignore** agar riwayat run terjadwal bisa ikut di-commit sebagai bukti workflow berjalan sendiri.
+- Lihat isinya: `cat logs/automation.jsonl` atau `tail -n 20 logs/automation.jsonl`.
+- Manifest detail per hari tetap tersimpan di `runs/` (git-ignored, bersifat lokal).
+
 ## Struktur
 
 ```
@@ -162,8 +176,10 @@ siskamling-pasar/
 │   ├── backtest_result.json
 │   ├── controls.json
 │   └── suspensions.json
-├── runs/               # Run manifest per hari (git-ignored)
-├── run_broadcast.sh    # Entry point cron (patroli sore)
+├── runs/               # Run manifest per hari (git-ignored, lokal)
+├── logs/               # Log otomasi append-only (ikut di-commit sebagai bukti)
+├── run_broadcast.sh    # Entry point cron (patroli sore, --trigger cron)
+├── run_morning_brief.sh # Entry point cron (briefing pagi, --trigger cron)
 ├── requirements.txt    # Dependensi HTTP API (FastAPI/uvicorn)
 ├── .env.example
 └── .gitignore

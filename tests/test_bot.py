@@ -1,3 +1,4 @@
+import json
 import sys
 import tempfile
 import unittest
@@ -8,6 +9,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from siskamling.bot import _extract_fundamental_metrics, execute_daily_broadcast, execute_morning_brief
 from siskamling.sectors import SectorsError
+
+# Arahkan manifest & log otomasi ke temp dir agar test tidak menulis ke runs/ dan logs/ repo.
+_LOG_DIR = tempfile.TemporaryDirectory()
+_RUNS_DIR = tempfile.TemporaryDirectory()
+_LOG_PATH = Path(_LOG_DIR.name) / "automation.jsonl"
+_LOG_PATCHER = patch("siskamling.bot.AUTOMATION_LOG_FILE", _LOG_PATH)
+_RUNS_PATCHER = patch("siskamling.bot.RUNS_DIRECTORY", Path(_RUNS_DIR.name))
+
+
+def setUpModule():
+    _LOG_PATCHER.start()
+    _RUNS_PATCHER.start()
+
+
+def tearDownModule():
+    _RUNS_PATCHER.stop()
+    _LOG_PATCHER.stop()
+    _RUNS_DIR.cleanup()
+    _LOG_DIR.cleanup()
+
+
+def read_automation_log() -> list[dict]:
+    if not _LOG_PATH.exists():
+        return []
+    return [json.loads(line) for line in _LOG_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 class TestBroadcastManifest(unittest.TestCase):
@@ -265,6 +291,43 @@ class TestWatchlistBriefing(unittest.TestCase):
 
         mock_direct.assert_not_called()
         self.assertEqual(manifest["portfolio_stocks_scanned"], 0)
+
+
+class TestAutomationLog(unittest.TestCase):
+    def setUp(self):
+        if _LOG_PATH.exists():
+            _LOG_PATH.unlink()
+
+    @patch("siskamling.bot.dispatch_report")
+    @patch("siskamling.bot.get_all_portfolios", return_value={})
+    @patch("siskamling.bot.sectors.get")
+    def test_patrol_run_appends_entry(self, mock_get, _mock_ports, _mock_dispatch):
+        mock_get.return_value = {"top_gainers": {"1d": []}}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("siskamling.bot.RUNS_DIRECTORY", Path(tmp)):
+                execute_daily_broadcast(dry_run=True, trigger="cron")
+
+        entries = read_automation_log()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["pipeline"], "patrol")
+        self.assertEqual(entries[0]["trigger"], "cron")
+        self.assertTrue(entries[0]["dry_run"])
+        self.assertIn("run_id", entries[0])
+
+    @patch("siskamling.bot.dispatch_briefing")
+    @patch("siskamling.bot.get_all_portfolios", return_value={})
+    @patch("siskamling.bot.sectors.screener", side_effect=SectorsError("boom"))
+    def test_morning_brief_error_still_logs(self, _mock_screener, _mock_ports, _mock_briefing):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("siskamling.bot.RUNS_DIRECTORY", Path(tmp)):
+                execute_morning_brief(trigger="api")
+
+        entries = read_automation_log()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["pipeline"], "morning-brief")
+        self.assertEqual(entries[0]["trigger"], "api")
+        self.assertEqual(entries[0]["summary"]["n_errors"], 1)
 
 
 class TestFundamentalMetrics(unittest.TestCase):

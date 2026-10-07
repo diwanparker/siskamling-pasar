@@ -56,6 +56,7 @@ def patrol(request: PatrolRequest | None = None) -> dict[str, Any]:
         n_gainers=params.n_gainers,
         fetch_days=params.fetch_days,
         dry_run=params.dry_run,
+        trigger="api",
     )
 
 
@@ -69,6 +70,7 @@ def morning_brief(request: MorningBriefRequest | None = None) -> dict[str, Any]:
         min_dividend_yield=params.min_dividend_yield,
         universe_size=params.universe_size,
         dry_run=params.dry_run,
+        trigger="api",
     )
 
 

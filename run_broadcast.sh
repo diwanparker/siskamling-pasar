@@ -5,4 +5,4 @@ set -euo pipefail
 cd "$(dirname "$0")"
 set -a; . .env; set +a
 export PYTHONPATH="$PWD"
-python3 -m siskamling.bot --broadcast >> runs/cron.log 2>&1
+python3 -m siskamling.bot --broadcast --trigger cron >> runs/cron.log 2>&1

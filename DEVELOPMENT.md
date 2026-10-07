@@ -36,6 +36,7 @@ Project ini dibangun dengan arsitektur **Python 3.10+ (disarankan 3.11 atau 3.12
    - Isi `SECTORS_API_KEY` dan token bot lokal masing-masing.
 4. **Folder Data & Cache Lokal**:
    Folder `data/cache/`, `runs/`, dan file `.venv/` adalah aset lokal dan sudah masuk `.gitignore`. Jangan pernah di-force commit ke repository.
+   **Pengecualian:** `logs/automation.jsonl` justru **wajib di-commit** — berkas itu mencatat tiap run otomasi (cron/n8n) sebagai bukti workflow berjalan sendiri. Jangan menambahkan `logs/` ke `.gitignore`.
 5. **Kebijakan Commit & PR (Human Engineer)**:
    Semua pesan commit, judul Pull Request, dan deskripsi review harus rapi, profesional, dan murni ditulis layaknya engineer profesional (tanpa mencantumkan tag/atribusi AI atau bot otomatis).
 

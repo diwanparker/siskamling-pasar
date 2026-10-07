@@ -42,6 +42,10 @@ logger = logging.getLogger("siskamling.bot")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIRECTORY = PROJECT_ROOT / "runs"
+# Log otomasi append-only. Sengaja TIDAK di-gitignore agar riwayat run terjadwal
+# (cron/n8n) ikut ter-commit sebagai bukti workflow berjalan tanpa intervensi.
+LOGS_DIRECTORY = PROJECT_ROOT / "logs"
+AUTOMATION_LOG_FILE = LOGS_DIRECTORY / "automation.jsonl"
 DEFAULT_FETCH_DAYS = 88
 MINIMUM_REQUIRED_BARS = 21
 RISK_ALERT_THRESHOLD = 40
@@ -218,13 +222,77 @@ def _evaluate_gainers(
     return triggered_alerts, encountered_errors
 
 
-def _save_manifest_to_disk(manifest: dict[str, Any]) -> Path:
-    """Tulis run manifest ke disk sebagai bukti otomasi harian."""
+def _run_duration_seconds(started_at: Any, finished_at: Any) -> float | None:
+    """Hitung durasi satu run dalam detik dari dua timestamp ISO."""
+    if not started_at or not finished_at:
+        return None
+    try:
+        delta = datetime.fromisoformat(str(finished_at)) - datetime.fromisoformat(str(started_at))
+        return round(delta.total_seconds(), 2)
+    except ValueError:
+        return None
+
+
+def _run_summary(pipeline: str, manifest: dict[str, Any]) -> dict[str, Any]:
+    """Ringkas hasil satu run untuk entri log otomasi."""
+    common = {
+        "portfolio_stocks_scanned": manifest.get("portfolio_stocks_scanned"),
+        "n_errors": manifest.get("n_errors"),
+    }
+    if pipeline == "patrol":
+        return {
+            "n_gainers_scanned": manifest.get("n_gainers_scanned"),
+            "n_alerts": manifest.get("n_alerts"),
+            **common,
+        }
+    return {
+        "n_universe_scanned": manifest.get("n_universe_scanned"),
+        "n_candidates": manifest.get("n_candidates"),
+        **common,
+    }
+
+
+def record_automation_run(
+    pipeline: str,
+    manifest: dict[str, Any],
+    trigger: str = "manual",
+    dry_run: bool = False,
+) -> None:
+    """Catat satu run ke log otomasi append-only (`logs/automation.jsonl`).
+
+    Satu baris JSON per run, ditulis setiap kali pipeline patroli/briefing selesai —
+    baik dipicu cron (CLI), n8n (HTTP API), maupun manual. Inilah jejak yang
+    membuktikan workflow berjalan sendiri pada jadwalnya.
+    """
+    entry = {
+        "logged_at": datetime.now(timezone.utc).isoformat(),
+        "pipeline": pipeline,
+        "trigger": trigger,
+        "dry_run": dry_run,
+        "run_id": manifest.get("run_id"),
+        "started_at": manifest.get("started_at"),
+        "finished_at": manifest.get("finished_at"),
+        "duration_seconds": _run_duration_seconds(manifest.get("started_at"), manifest.get("finished_at")),
+        "summary": _run_summary(pipeline, manifest),
+    }
+    try:
+        AUTOMATION_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with AUTOMATION_LOG_FILE.open("a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+    except OSError as error:
+        logger.warning("Gagal menulis log otomasi: %s", error)
+
+
+def _finalize_run(pipeline: str, manifest: dict[str, Any], trigger: str, dry_run: bool) -> dict[str, Any]:
+    """Simpan run manifest ke disk, catat log otomasi, lalu kembalikan manifest."""
     RUNS_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    manifest_path = RUNS_DIRECTORY / f"{date.today().isoformat()}.json"
+    prefix = "morning-" if pipeline == "morning-brief" else ""
+    manifest_path = RUNS_DIRECTORY / f"{prefix}{date.today().isoformat()}.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     logger.info("Run manifest berhasil disimpan: %s", manifest_path)
-    return manifest_path
+
+    record_automation_run(pipeline, manifest, trigger=trigger, dry_run=dry_run)
+    return manifest
 
 
 def execute_daily_broadcast(
@@ -232,11 +300,13 @@ def execute_daily_broadcast(
     n_gainers: int | None = None,
     fetch_days: int | None = None,
     dry_run: bool = False,
+    trigger: str = "manual",
 ) -> dict[str, Any]:
     """Pindai top gainers harian, evaluasi risiko, broadcast alert, dan catat manifest.
 
     Manifest selalu memuat `messages` (narasi teks polos). `dry_run=True` menahan
-    pengiriman ke kanal Telegram/Discord.
+    pengiriman ke kanal Telegram/Discord. `trigger` melabeli sumber run (cron/api/manual)
+    pada log otomasi.
     """
     resolved_threshold = threshold if threshold is not None else int(os.environ.get("RISK_ALERT_THRESHOLD", RISK_ALERT_THRESHOLD))
     resolved_n_gainers = n_gainers if n_gainers is not None else int(os.environ.get("N_GAINERS", 20))
@@ -255,13 +325,17 @@ def execute_daily_broadcast(
         gainer_items = _fetch_top_gainers(resolved_n_gainers)
     except sectors.SectorsError as error:
         logger.error("Gagal mengambil daftar top gainers: %s", error)
-        return _build_manifest(start_timestamp, 0, [], [str(error)], messages=[])
+        return _finalize_run(
+            "patrol", _build_manifest(start_timestamp, 0, [], [str(error)], messages=[]), trigger, dry_run
+        )
 
     if not gainer_items:
         logger.warning("Tidak ada daftar top gainers untuk hari ini")
-        return _build_manifest(
-            start_timestamp, 0, [], [],
-            messages=build_report_messages(PLAIN_TEXT_CHANNEL, []),
+        return _finalize_run(
+            "patrol",
+            _build_manifest(start_timestamp, 0, [], [], messages=build_report_messages(PLAIN_TEXT_CHANNEL, [])),
+            trigger,
+            dry_run,
         )
 
     triggered_alerts, encountered_errors = _evaluate_gainers(
@@ -318,11 +392,7 @@ def execute_daily_broadcast(
         portfolio_scanned=portfolio_stocks_scanned,
         portfolio_alerts=portfolio_alerts,
     )
-    RUNS_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    manifest_path = RUNS_DIRECTORY / f"{date.today().isoformat()}.json"
-    manifest_path.write_text(json.dumps(run_manifest, indent=2), encoding="utf-8")
-    logger.info("Run manifest berhasil disimpan: %s", manifest_path)
-    return run_manifest
+    return _finalize_run("patrol", run_manifest, trigger, dry_run)
 
 
 def _dispatch_user_watchlist(
@@ -481,11 +551,13 @@ def execute_morning_brief(
     min_dividend_yield: float | None = None,
     universe_size: int | None = None,
     dry_run: bool = False,
+    trigger: str = "manual",
 ) -> dict[str, Any]:
     """Saring kandidat fundamental sehat, broadcast briefing pagi, dan catat manifest.
 
     Manifest selalu memuat `messages` (narasi teks polos). `dry_run=True` menahan
-    pengiriman ke kanal Telegram/Discord.
+    pengiriman ke kanal Telegram/Discord. `trigger` melabeli sumber run (cron/api/manual)
+    pada log otomasi.
     """
     resolved_n = n_candidates if n_candidates is not None else int(os.environ.get("N_CANDIDATES", DEFAULT_N_CANDIDATES))
     resolved_max_pe = max_pe if max_pe is not None else float(os.environ.get("MAX_PE", DEFAULT_MAX_PE))
@@ -512,7 +584,12 @@ def execute_morning_brief(
         universe = sectors.screener(where="market_cap IS NOT NULL", order_by="-market_cap", limit=resolved_universe)
     except sectors.SectorsError as error:
         logger.error("Gagal mengambil universe screener: %s", error)
-        return _build_briefing_manifest(start_timestamp, 0, [], [str(error)], messages=[])
+        return _finalize_run(
+            "morning-brief",
+            _build_briefing_manifest(start_timestamp, 0, [], [str(error)], messages=[]),
+            trigger,
+            dry_run,
+        )
 
     candidates: list[dict[str, Any]] = []
     encountered_errors: list[str] = []
@@ -555,11 +632,7 @@ def execute_morning_brief(
         messages=messages,
         portfolio_scanned=portfolio_stocks_scanned,
     )
-    RUNS_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    manifest_path = RUNS_DIRECTORY / f"morning-{date.today().isoformat()}.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    logger.info("Briefing manifest berhasil disimpan: %s", manifest_path)
-    return manifest
+    return _finalize_run("morning-brief", manifest, trigger, dry_run)
 
 
 def _build_briefing_manifest(
@@ -626,6 +699,7 @@ def main() -> None:
     parser.add_argument("--universe-size", type=int, default=None, dest="universe_size", help="Jumlah saham universe yang diperiksa briefing pagi (default: 20)")
     parser.add_argument("--host", default="127.0.0.1", help="Host HTTP API (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="Port HTTP API (default: 8000)")
+    parser.add_argument("--trigger", default="manual", help="Label sumber run untuk log otomasi (mis. cron, n8n, manual)")
     parser.add_argument("--json", action="store_true", help="Cetak run manifest dalam format JSON ke stdout (untuk n8n/otomasi)")
     args = parser.parse_args()
 
@@ -637,6 +711,7 @@ def main() -> None:
             n_gainers=args.n_gainers,
             fetch_days=args.days,
             dry_run=args.dry_run,
+            trigger=args.trigger,
         )
         if args.json:
             print(json.dumps(manifest, indent=2, ensure_ascii=False, default=str))
@@ -647,6 +722,7 @@ def main() -> None:
             min_dividend_yield=args.min_dividend_yield,
             universe_size=args.universe_size,
             dry_run=args.dry_run,
+            trigger=args.trigger,
         )
         if args.json:
             print(json.dumps(manifest, indent=2, ensure_ascii=False, default=str))
