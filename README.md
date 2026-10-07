@@ -14,7 +14,7 @@ Buat investor ritel pemula yang gampang FOMO sama saham viral, Siskamling Pasar 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌───────────────┐     ┌──────────┐
 │  Cron 16:30 │────▶│ Sectors API  │────▶│ Skor Teknikal │────▶│ Telegram │
-│  (Sn-Jum)   │     │ Top Gainers  │     │ Anti-Pom-Pom  │     │ Channel  │
+│  (Sn-Jum)   │     │ Top Gainers  │     │ Anti-Pom-Pom  │     │ Discord  │
 └─────────────┘     │ Daily OHLCV  │     │ (0-100)       │     └──────────┘
                     └──────────────┘     │               │
                                          │ LLM Narator   │
@@ -31,7 +31,7 @@ Buat investor ritel pemula yang gampang FOMO sama saham viral, Siskamling Pasar 
    - Posisi di rentang 90 hari (puncak?)
    - Gap naik, ekor atas panjang (ditolak di atas)
 4. Skor ≥ 40 → masuk radar. LLM merangkum dalam bahasa warga (validator memastikan angka sesuai data)
-5. Kirim ke Telegram + simpan run manifest (bukti unattended run)
+5. Kirim ke Telegram/Discord + simpan run manifest (bukti unattended run)
 
 ## Backtest
 
@@ -51,6 +51,7 @@ Diuji terhadap **24 saham yang disuspensi BEI** karena "peningkatan harga kumula
 
 - 🔔 **Broadcast harian** — otomatis tiap 16:30 WIB hari bursa
 - 🔍 **`/ronda TICKER`** — cek skor satu saham secara interaktif
+- 💬 **Multi-platform (Open/Closed)** — siaran & perintah `/ronda` jalan di **Telegram** *dan* **Discord**. Menambah platform baru cukup bikin satu subclass `Channel` + `@register_channel`, tanpa mengubah kode dispatch
 - 🤖 **LLM narator** — bahasa santai ala hansip, dengan validator angka
 - 📋 **Run manifest** — JSON per run (timestamp, jumlah alert, error) sebagai bukti otomatis
 - 💾 **Cache disk** — hemat kredit API, data fundamental di-cache
@@ -76,6 +77,20 @@ python3 -m siskamling.bot --broadcast
 30 16 * * 1-5 /path/to/siskamling-pasar/run_broadcast.sh
 ```
 
+### Bot Discord (opsional)
+
+Siaran & perintah `/ronda` juga tersedia di Discord. Yang perlu disiapkan:
+
+1. Buat aplikasi + bot di [Discord Developer Portal](https://discord.com/developers/applications).
+2. Salin **Bot Token** ke `DISCORD_BOT_TOKEN`, dan **Channel ID** tujuan siaran ke `DISCORD_CHANNEL_ID`.
+   Aktifkan *Developer Mode* di klien Discord → klik kanan channel → **Copy Channel ID**.
+3. Undang bot ke server (scope `bot` + `applications.commands`).
+4. (Opsional) Isi `DISCORD_GUILD_ID` agar slash command langsung muncul di satu server saat pengembangan.
+5. Jalankan `python3 -m siskamling.bot --poll` — bot mendaftarkan slash command dan membuka koneksi Gateway.
+
+> Bot ini memakai slash command, jadi **tidak butuh** privileged *Message Content Intent*.
+> Kalau `DISCORD_GUILD_ID` kosong, slash command didaftarkan global dan bisa butuh ~1 jam untuk muncul.
+
 ## Otomasi n8n (Visual UI Workflow)
 
 Untuk kolaborasi tim atau pengguna yang ingin memantau dan mengontrol jadwal patroli secara visual:
@@ -94,7 +109,12 @@ siskamling-pasar/
 │   ├── score.py        # Skor teknikal anti-pom-pom (deterministik)
 │   ├── narrator.py     # LLM narator + validator angka + fallback template
 │   ├── backtest.py     # Point-in-time backtest vs suspensi BEI
-│   └── bot.py          # Bot Telegram (polling + broadcast + manifest)
+│   ├── bot.py          # Orkestrasi: skoring, broadcast, CLI
+│   └── platforms/      # Abstraksi kanal (Open/Closed Principle)
+│       ├── base.py            # Channel/InteractiveChannel, router & dispatch bersama
+│       ├── telegram.py        # Kanal Telegram (polling)
+│       ├── discord.py         # Kanal Discord (REST + slash command)
+│       └── discord_gateway.py # Transport WebSocket Discord Gateway (stdlib)
 ├── workflows/
 │   └── siskamling_patrol_workflow.json  # Workflow visual n8n
 ├── tests/              # Unit test deterministik
@@ -114,6 +134,7 @@ siskamling-pasar/
 - **Sectors API v2** — OHLCV harian, top gainers, suspensi
 - **LLM** via OpenAI-compatible API (9router/dll) — opsional, ada fallback template
 - **Telegram Bot API** — broadcast + interaktif
+- **Discord Bot API + Gateway** — broadcast + slash command interaktif (WebSocket stdlib)
 - **Cron** — scheduler harian
 
 ## Disclaimer
