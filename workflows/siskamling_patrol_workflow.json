@@ -12,20 +12,14 @@
       "name": "Test Patrol On-Demand",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [
-        240,
-        260
-      ]
+      "position": [240, 260]
     },
     {
       "id": "schedule-trigger",
       "name": "Daily Market Close (16:30 WIB)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [
-        240,
-        440
-      ],
+      "position": [240, 440],
       "parameters": {
         "rule": {
           "interval": [
@@ -42,10 +36,7 @@
       "name": "Morning Brief (08:30 WIB)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [
-        240,
-        620
-      ],
+      "position": [240, 620],
       "parameters": {
         "rule": {
           "interval": [
@@ -62,10 +53,7 @@
       "name": "Configuration",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [
-        500,
-        340
-      ],
+      "position": [500, 340],
       "notes": "Pusat kontrol parameter patroli sore: base URL API, threshold skor, jumlah top gainers, dan hari data.",
       "parameters": {
         "assignments": {
@@ -73,7 +61,7 @@
             {
               "id": "api_base_url",
               "name": "api_base_url",
-              "value": "http://localhost:8000",
+              "value": "http://172.18.0.1:8000",
               "type": "string"
             },
             {
@@ -104,10 +92,7 @@
       "name": "Configuration Morning Brief",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [
-        500,
-        620
-      ],
+      "position": [500, 620],
       "notes": "Pusat kontrol parameter briefing pagi: base URL API, jumlah kandidat, batas PE, dan yield minimal.",
       "parameters": {
         "assignments": {
@@ -115,7 +100,7 @@
             {
               "id": "api_base_url",
               "name": "api_base_url",
-              "value": "http://localhost:8000",
+              "value": "http://172.18.0.1:8000",
               "type": "string"
             },
             {
@@ -146,10 +131,7 @@
       "name": "Run Siskamling Patrol",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        760,
-        340
-      ],
+      "position": [760, 340],
       "notes": "Panggil endpoint patroli risiko (POST /patrol) di HTTP API Siskamling.",
       "parameters": {
         "method": "POST",
@@ -167,10 +149,7 @@
       "name": "Run Morning Brief",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        760,
-        620
-      ],
+      "position": [760, 620],
       "notes": "Panggil endpoint briefing pagi (POST /morning-brief) — screening fundamental deterministik.",
       "parameters": {
         "method": "POST",
@@ -188,10 +167,7 @@
       "name": "Parse Run Manifest",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1020,
-        340
-      ],
+      "position": [1020, 340],
       "notes": "Respons JSON dari /patrol sudah ter-parse; susun ringkasan ronda.",
       "parameters": {
         "mode": "runOnceForAllItems",
@@ -204,10 +180,7 @@
       "name": "Parse Morning Brief",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1020,
-        620
-      ],
+      "position": [1020, 620],
       "notes": "Respons JSON dari /morning-brief sudah ter-parse; susun ringkasan kandidat.",
       "parameters": {
         "mode": "runOnceForAllItems",
@@ -220,10 +193,7 @@
       "name": "Documentation Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [
-        200,
-        60
-      ],
+      "position": [200, 60],
       "parameters": {
         "content": "## 🏘️ Siskamling Pasar — IDX Radar Anti-Pom-Pom\n**Dual Pipeline Otomasi Bursa Efek Indonesia (Track 2: Automation & Workflows)**\n\nIntegrasi via **HTTP API** (FastAPI), bukan subprocess. Jalankan server sekali di mesin yang sama dengan n8n:\n`python3 -m siskamling.bot --serve --host 0.0.0.0 --port 8000` (atau `uvicorn siskamling.api:app --port 8000`).\nBase URL diatur di node **Configuration** / **Configuration Morning Brief** (`api_base_url`).\n\n### Pipeline 1 — Morning Brief (08:30 WIB)\n1. **Trigger**: Otomatis tiap hari bursa pukul 08:30 WIB.\n2. **Configuration Morning Brief**: Atur `api_base_url`, jumlah kandidat (default: 3), batas PE (default: 20), dan dividend yield minimal (default: 5%).\n3. **Run Morning Brief**: `POST /morning-brief` — Python runner menyaring kandidat fundamental sehat (rule engine deterministik), lalu menyusun briefing.\n4. **Parse Morning Brief**: Respons JSON manifest; ringkasan kandidat tersedia di run history.\n\n### Pipeline 2 — Post-Market Radar (16:30 WIB)\n1. **Trigger**: Otomatis tiap hari bursa pukul 16:30 WIB (atau klik tombol *Test Patrol On-Demand*).\n2. **Configuration**: Atur `api_base_url`, `alert_threshold` (default: 40), `n_gainers` (default: 20), dan `fetch_days` dari satu kotak.\n3. **Run Siskamling Patrol**: `POST /patrol` — memindai top gainers, evaluasi 4 pilar teknikal deterministik, susun laporan bullet, lalu broadcast ke Telegram/Discord.\n4. **Parse Run Manifest**: Respons JSON manifest tercatat rapi di run history dan folder runs/.\n\n### Catatan Deployment\n- **HTTP API**: server `siskamling.api:app` harus berjalan dan terjangkau dari n8n. Ganti `api_base_url` bila host/port berbeda.\n- **Env var**: Siapkan `.env` berisi `SECTORS_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (opsional: `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`).\n- **Endpoint tersedia**: `GET /health`, `POST /patrol`, `POST /morning-brief`, `GET /ronda/{ticker}`.",
         "height": 240,
