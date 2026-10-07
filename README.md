@@ -178,6 +178,10 @@ siskamling-pasar/
 - **Discord Bot API + Gateway** — broadcast + slash command interaktif (WebSocket stdlib)
 - **Cron** — scheduler harian
 
+## Development & Panduan Tim
+
+Untuk alur kerja harian tim, standar pembuatan branch, pengujian (TDD), serta panduan kolaborasi dan deployment, silakan lihat [DEVELOPMENT.md](DEVELOPMENT.md).
+
 ## Disclaimer
 
 ⚠️ **Ini bukan saran investasi.** Siskamling Pasar hanya menyajikan data publik dari Sectors.app dengan perhitungan sederhana. Keputusan investasi sepenuhnya tanggung jawab pengguna. Tidak ada afiliasi dengan emiten atau BEI.
