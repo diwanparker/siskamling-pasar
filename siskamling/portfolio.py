@@ -116,26 +116,23 @@ def remove_ticker(user_id: str, ticker: str) -> list[str]:
 def get_all_portfolios() -> dict[str, list[str]]:
     """Ambil seluruh portofolio pengguna untuk siklus broadcast ronda (dideduplikasi per platform & user)."""
     raw_data = _load_data()
+    prefixed_users: set[str] = set()
+    for key in raw_data:
+        platform, recipient = parse_user_key(key)
+        if platform:
+            prefixed_users.add(recipient)
+
     deduped: dict[str, list[str]] = {}
     needs_rewrite = False
 
-    # Prioritaskan kunci ber-prefiks (mis. 'telegram:123') daripada unprefixed ('123')
     for key, tickers in raw_data.items():
         platform, recipient = parse_user_key(key)
-        normalized_platform = platform or "telegram"
-        normalized_key = f"{normalized_platform}:{recipient}"
-
-        if normalized_key in deduped:
+        if not platform and recipient in prefixed_users:
             needs_rewrite = True
-            # Jika kunci saat ini ber-prefiks eksplisit, gunakan data ber-prefiks
-            if platform:
-                deduped[normalized_key] = tickers
-        else:
-            if not platform:
-                needs_rewrite = True
-            deduped[normalized_key] = tickers
+            continue
+        deduped[key] = tickers
 
     if needs_rewrite:
         _save_data(deduped)
 
-    return deduped
+    return deduped
