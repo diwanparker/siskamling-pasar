@@ -32,11 +32,11 @@ def load_env_defaults() -> None:
     if not env_file.exists():
         return
     try:
-        for line in env_file.read_text(encoding="utf-8").splitlines():
+        for line in env_file.read_text(encoding="utf-8-sig").splitlines():
             stripped = line.strip()
             if stripped and not stripped.startswith("#") and "=" in stripped:
                 key, val = stripped.split("=", 1)
-                os.environ.setdefault(key.strip(), val.strip())
+                os.environ.setdefault(key.strip().lstrip("\ufeff"), val.strip())
     except OSError as error:
         logger.debug("File .env tidak dapat dibaca: %s", error)
 

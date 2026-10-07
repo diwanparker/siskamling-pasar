@@ -55,8 +55,68 @@ PLAIN_TEXT_CHANNEL = PlainTextChannel()
 
 # ─── Penilaian Saham Tunggal ───────────────────────────────────────
 
+def _fetch_fundamental_metrics_for_score(clean_symbol: str) -> dict[str, Any] | None:
+    """Tarik metrik fundamental (kapitalisasi, PE, dividen, status rugi) untuk SQRI."""
+    try:
+        report = sectors.company_report(clean_symbol, sections=["overview", "valuation", "dividend", "financials"])
+        if not report:
+            return None
+        overview = report.get("overview") or {}
+        valuation = report.get("valuation") or {}
+        dividend = report.get("dividend") or {}
+        financials = report.get("financials") or {}
+
+        raw_mcap = overview.get("market_cap")
+        mcap_billion = (raw_mcap / 1_000_000_000) if isinstance(raw_mcap, (int, float)) else None
+
+        pe_val = valuation.get("pe")
+        if pe_val is None:
+            pe_val = valuation.get("forward_pe")
+
+        raw_yield = dividend.get("yield_ttm")
+        if raw_yield is None:
+            raw_yield = dividend.get("dividend_yield")
+        div_yield = (raw_yield * 100.0) if (isinstance(raw_yield, (int, float)) and raw_yield < 1.0) else raw_yield
+
+        is_loss = False
+        if pe_val is not None and pe_val < 0:
+            is_loss = True
+        else:
+            historical = financials.get("historical_financials") or []
+            if historical:
+                latest_year = max(historical, key=lambda row: str(row.get("year", "")))
+                earnings = latest_year.get("earnings")
+                if isinstance(earnings, (int, float)) and earnings < 0:
+                    is_loss = True
+
+        return {
+            "market_cap_billion": mcap_billion,
+            "pe": pe_val,
+            "dividend_yield": div_yield,
+            "is_loss_making": is_loss,
+        }
+    except Exception as error:
+        logger.debug("Data fundamental tidak tersedia untuk %s: %s", clean_symbol, error)
+        return None
+
+
+def _fetch_market_return() -> float | None:
+    """Ambil return 1 hari IHSG untuk evaluasi divergensi makro."""
+    try:
+        ihsg_bars = sectors.get("/v2/index-daily/ihsg/", cache=True)
+        if isinstance(ihsg_bars, list) and len(ihsg_bars) >= 2:
+            sorted_bars = sorted(ihsg_bars, key=lambda b: str(b.get("date", "")))
+            c_today = sorted_bars[-1].get("price")
+            c_prev = sorted_bars[-2].get("price")
+            if c_today and c_prev:
+                return (float(c_today) - float(c_prev)) / float(c_prev)
+    except Exception as error:
+        logger.debug("Return IHSG tidak tersedia: %s", error)
+    return None
+
+
 def score_ticker(symbol: str, days: int = DEFAULT_FETCH_DAYS) -> dict[str, Any]:
-    """Tarik data dan hitung skor risiko teknikal suatu saham."""
+    """Tarik data dan hitung skor risiko multi-faktor SQRI suatu saham."""
     clean_symbol = symbol.upper().replace(".JK", "")
     full_symbol = f"{clean_symbol}.JK"
     today = date.today()
@@ -74,7 +134,10 @@ def score_ticker(symbol: str, days: int = DEFAULT_FETCH_DAYS) -> dict[str, Any]:
     if features is None:
         return {"symbol": full_symbol, "error": "Gagal menghitung fitur teknikal"}
 
-    score, reasons = calculate_risk_score(features)
+    fundamental = _fetch_fundamental_metrics_for_score(clean_symbol)
+    market_return = _fetch_market_return()
+
+    score, reasons = calculate_risk_score(features, fundamental=fundamental, market_return=market_return)
     narration = narrate(full_symbol, score, reasons, features)
 
     return {
@@ -82,6 +145,8 @@ def score_ticker(symbol: str, days: int = DEFAULT_FETCH_DAYS) -> dict[str, Any]:
         "score": score,
         "reasons": reasons,
         "features": features,
+        "fundamental": fundamental,
+        "market_return": market_return,
         "narration": narration,
     }
 

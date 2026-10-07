@@ -73,6 +73,7 @@ def build_alert_detail(
     ret_5d = _feature(target_features, "return_5d", "ret_5d")
     ret_20d = _feature(target_features, "return_20d", "ret_20d")
     vol_ratio = _feature(target_features, "volume_ratio", "vol_ratio")
+    vol_zscore = target_features.get("volume_zscore")
     pos_90d = _feature(target_features, "position_90d", "pos_90d")
     at_high = bool(target_features.get("is_at_90d_high", target_features.get("at_90d_high", False)))
 
@@ -80,12 +81,16 @@ def build_alert_detail(
     if at_high:
         position_line += " (di puncak)"
 
+    vol_line = f"• Volume: {vol_ratio:.1f}x rata-rata 20 hari"
+    if isinstance(vol_zscore, (int, float)):
+        vol_line += f" (Z-Score {vol_zscore:+.1f}σ)"
+
     trigger_text = "; ".join(target_reasons) if target_reasons else "tidak ada indikasi risiko kuat"
 
     return "\n".join([
         f"{risk_emoji(target_score)} {target_symbol.replace('.JK', '')} — Skor Kentongan {target_score}/100",
         f"• Harga: {_format_signed_percent(ret_1d)} (1h) · {_format_signed_percent(ret_5d)} (5h) · {_format_signed_percent(ret_20d)} (20h)",
-        f"• Volume: {vol_ratio:.1f}x rata-rata 20 hari",
+        vol_line,
         position_line,
         f"• Pemicu: {trigger_text}",
         "",
