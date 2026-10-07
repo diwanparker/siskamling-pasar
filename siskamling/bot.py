@@ -72,6 +72,57 @@ def score_ticker(symbol: str, days: int = DEFAULT_FETCH_DAYS) -> dict[str, Any]:
 
 # ─── Patroli Harian & Run Manifest ─────────────────────────────────
 
+def _fetch_top_gainers(n_gainers: int) -> list[dict[str, Any]]:
+    """Tarik daftar saham top gainers harian dari Sectors API."""
+    gainers_response = sectors.get(
+        "/v2/companies/top-changes/",
+        {
+            "classifications": "top_gainers",
+            "periods": "1d",
+            "n_stock": n_gainers,
+            "min_mcap_billion": 0,
+        },
+        cache=False,
+    )
+    return gainers_response.get("top_gainers", {}).get("1d", [])
+
+
+def _evaluate_gainers(
+    gainer_items: list[dict[str, Any]],
+    threshold: int,
+    fetch_days: int,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Evaluasi setiap saham top gainer dan filter yang melampaui ambang risiko."""
+    triggered_alerts: list[dict[str, Any]] = []
+    encountered_errors: list[str] = []
+
+    for item in gainer_items:
+        symbol = item.get("symbol", "").replace(".JK", "")
+        if not symbol:
+            continue
+
+        try:
+            result = score_ticker(symbol, days=fetch_days)
+            if "error" in result:
+                encountered_errors.append(f"{symbol}: {result['error']}")
+                continue
+            if result["score"] >= threshold:
+                triggered_alerts.append(result)
+        except Exception as error:  # Tangkapan defensif untuk kesalahan tak terduga per saham
+            encountered_errors.append(f"{symbol}: {error}")
+
+    return triggered_alerts, encountered_errors
+
+
+def _save_manifest_to_disk(manifest: dict[str, Any]) -> Path:
+    """Tulis run manifest ke disk sebagai bukti otomasi harian."""
+    RUNS_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    manifest_path = RUNS_DIRECTORY / f"{date.today().isoformat()}.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    logger.info("Run manifest berhasil disimpan: %s", manifest_path)
+    return manifest_path
+
+
 def execute_daily_broadcast(
     threshold: int | None = None,
     n_gainers: int | None = None,
@@ -91,66 +142,69 @@ def execute_daily_broadcast(
     start_timestamp = datetime.now(timezone.utc).isoformat()
 
     try:
-        gainers_response = sectors.get("/v2/companies/top-changes/", {
-            "classifications": "top_gainers",
-            "periods": "1d",
-            "n_stock": resolved_n_gainers,
-            "min_mcap_billion": 0,
-        }, cache=False)
+        gainer_items = _fetch_top_gainers(resolved_n_gainers)
     except sectors.SectorsError as error:
         logger.error("Gagal mengambil daftar top gainers: %s", error)
         return _build_manifest(start_timestamp, 0, [], [str(error)])
 
-    gainer_items = gainers_response.get("top_gainers", {}).get("1d", [])
     if not gainer_items:
         logger.warning("Tidak ada daftar top gainers untuk hari ini")
         return _build_manifest(start_timestamp, 0, [], [])
 
-    triggered_alerts: list[dict[str, Any]] = []
-    encountered_errors: list[str] = []
-
-    for item in gainer_items:
-        symbol = item.get("symbol", "").replace(".JK", "")
-        if not symbol:
-            continue
-
-        try:
-            result = score_ticker(symbol, days=resolved_fetch_days)
-            if "error" in result:
-                encountered_errors.append(f"{symbol}: {result['error']}")
-                continue
-            if result["score"] >= resolved_threshold:
-                triggered_alerts.append(result)
-        except Exception as error:  # Defensive catch for unexpected item failure
-            encountered_errors.append(f"{symbol}: {error}")
+    triggered_alerts, encountered_errors = _evaluate_gainers(
+        gainer_items,
+        resolved_threshold,
+        resolved_fetch_days,
+    )
 
     # Fan-out ke seluruh kanal notifikasi yang terkonfigurasi (Telegram, Discord, ...)
     dispatch_report(all_channels(), triggered_alerts)
 
     run_manifest = _build_manifest(start_timestamp, len(gainer_items), triggered_alerts, encountered_errors)
-    RUNS_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    manifest_path = RUNS_DIRECTORY / f"{date.today().isoformat()}.json"
-    manifest_path.write_text(json.dumps(run_manifest, indent=2), encoding="utf-8")
-    logger.info("Run manifest berhasil disimpan: %s", manifest_path)
+    _save_manifest_to_disk(run_manifest)
     return run_manifest
 
 
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class ManifestData:
+    """Objek data masukan untuk penyusunan run manifest."""
+
+    start_timestamp: str
+    n_gainers_scanned: int
+    triggered_alerts: list[dict[str, Any]]
+    encountered_errors: list[str]
+
+
 def _build_manifest(
-    start_timestamp: str,
-    n_gainers_scanned: int,
-    triggered_alerts: list[dict[str, Any]],
-    encountered_errors: list[str],
+    start_timestamp: str | ManifestData,
+    n_gainers_scanned: int = 0,
+    triggered_alerts: list[dict[str, Any]] | None = None,
+    encountered_errors: list[str] | None = None,
 ) -> dict[str, Any]:
     """Susun run manifest (bukti otomasi terjadwal tanpa intervensi manusia)."""
+    if isinstance(start_timestamp, ManifestData):
+        start_ts = start_timestamp.start_timestamp
+        scanned = start_timestamp.n_gainers_scanned
+        alerts = start_timestamp.triggered_alerts
+        errors = start_timestamp.encountered_errors
+    else:
+        start_ts = start_timestamp
+        scanned = n_gainers_scanned
+        alerts = triggered_alerts or []
+        errors = encountered_errors or []
+
     return {
-        "run_id": hashlib.sha1(start_timestamp.encode()).hexdigest()[:12],
-        "started_at": start_timestamp,
+        "run_id": hashlib.sha1(start_ts.encode()).hexdigest()[:12],
+        "started_at": start_ts,
         "finished_at": datetime.now(timezone.utc).isoformat(),
-        "n_gainers_scanned": n_gainers_scanned,
-        "n_alerts": len(triggered_alerts),
-        "n_errors": len(encountered_errors),
-        "alerts": [{"symbol": alert["symbol"], "score": alert["score"]} for alert in triggered_alerts],
-        "errors": encountered_errors[:10],
+        "n_gainers_scanned": scanned,
+        "n_alerts": len(alerts),
+        "n_errors": len(errors),
+        "alerts": [{"symbol": alert["symbol"], "score": alert["score"]} for alert in alerts],
+        "errors": errors[:10],
     }
 
 

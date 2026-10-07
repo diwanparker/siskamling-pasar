@@ -194,8 +194,8 @@ class DiscordGateway:
         if sock is not None:
             try:
                 sock.close()
-            except OSError:
-                pass
+            except OSError as error:
+                logger.debug("Error saat menutup socket gateway: %s", error)
 
     def _send_json(self, payload: dict[str, Any]) -> None:
         self._send_frame(0x1, json.dumps(payload).encode("utf-8"))

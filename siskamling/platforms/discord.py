@@ -6,7 +6,7 @@ import logging
 import os
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, Callable
 
 from .base import CommandRouter, InteractiveChannel, ReplyContext, register_channel
 from .discord_gateway import DiscordGateway, build_intents
@@ -143,20 +143,27 @@ class DiscordChannel(InteractiveChannel):
             logger.warning("Application ID Discord tidak diketahui; slash command tidak didaftarkan")
 
         logger.info("Kanal Discord siap berpatroli (gateway mode aktif)...")
+        self._router = router
         gateway = DiscordGateway(
             self.token(),
             intents=build_intents(),
-            on_event=lambda event, data: self._on_event(event, data, router),
+            on_event=self._on_event,
         )
         gateway.run_forever()
 
-    def _on_event(self, event_name: str, data: Any, router: CommandRouter) -> None:
+    def _on_event(self, event_name: str, data: Any, router: CommandRouter | None = None) -> None:
+        active_router = router or getattr(self, "_router", None)
+        if active_router is None:
+            return
         if event_name == "INTERACTION_CREATE" and isinstance(data, dict):
-            self._handle_interaction(data, router)
+            self._handle_interaction(data, active_router)
         elif event_name == "MESSAGE_CREATE" and isinstance(data, dict):
-            self._handle_message(data, router)
+            self._handle_message(data, active_router)
 
-    def _handle_interaction(self, interaction: dict[str, Any], router: CommandRouter) -> None:
+    def _handle_interaction(self, interaction: dict[str, Any], router: CommandRouter | None = None) -> None:
+        active_router = router or getattr(self, "_router", None)
+        if active_router is None:
+            return
         if interaction.get("type") != APPLICATION_COMMAND:
             return
 
@@ -177,10 +184,18 @@ class DiscordChannel(InteractiveChannel):
             {"type": RESPONSE_DEFERRED_CHANNEL_MESSAGE},
         )
 
-        reply = lambda content, app_id=application_id, token=interaction_token: self.request(
-            "PATCH", f"/webhooks/{app_id}/{token}/messages/@original", {"content": content}
+        interaction_sender = self._create_interaction_reply_sender(application_id, interaction_token)
+        router.handle(command_text, ReplyContext(send=interaction_sender, bold=self.bold))
+
+    def _create_interaction_reply_sender(self, application_id: str, token: str) -> Callable[[str], Any]:
+        """Buat fungsi pengirim balasan untuk Discord interaction response."""
+        return lambda content: self.request(
+            "PATCH", f"/webhooks/{application_id}/{token}/messages/@original", {"content": content}
         )
-        router.handle(command_text, ReplyContext(send=reply, bold=self.bold))
+
+    def _create_channel_reply_sender(self, channel_id: str) -> Callable[[str], Any]:
+        """Buat fungsi pengirim balasan untuk pesan teks di Discord channel."""
+        return lambda content: self.send(channel_id, content)
 
     def _handle_message(self, message: dict[str, Any], router: CommandRouter) -> None:
         author = message.get("author") or {}
@@ -192,8 +207,8 @@ class DiscordChannel(InteractiveChannel):
         if not text or not channel_id:
             return
 
-        reply = lambda content, cid=channel_id: self.send(cid, content)
-        router.handle(text, ReplyContext(send=reply, bold=self.bold))
+        channel_sender = self._create_channel_reply_sender(channel_id)
+        router.handle(text, ReplyContext(send=channel_sender, bold=self.bold))
 
     @staticmethod
     def _command_text(interaction: dict[str, Any]) -> str | None:

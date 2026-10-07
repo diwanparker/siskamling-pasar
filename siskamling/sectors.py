@@ -37,8 +37,8 @@ def load_env_defaults() -> None:
             if stripped and not stripped.startswith("#") and "=" in stripped:
                 key, val = stripped.split("=", 1)
                 os.environ.setdefault(key.strip(), val.strip())
-    except OSError:
-        pass
+    except OSError as error:
+        logger.debug("File .env tidak dapat dibaca: %s", error)
 
 
 load_env_defaults()

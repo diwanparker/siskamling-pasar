@@ -7,7 +7,7 @@ import os
 import time
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, Callable
 
 from .base import CommandRouter, InteractiveChannel, ReplyContext, register_channel
 
@@ -68,6 +68,10 @@ class TelegramChannel(InteractiveChannel):
             "disable_web_page_preview": True,
         })
 
+    def _create_reply_sender(self, chat_id: str) -> Callable[[str], None]:
+        """Buat fungsi pengirim balasan untuk satu chat id."""
+        return lambda content: self.send(chat_id, content)
+
     def run_listener(self, router: CommandRouter) -> None:
         if not self.token():
             logger.error("TELEGRAM_BOT_TOKEN wajib diisi untuk menjalankan polling")
@@ -91,8 +95,8 @@ class TelegramChannel(InteractiveChannel):
                     if not text or not chat_id:
                         continue
 
-                    reply = lambda content, cid=chat_id: self.send(cid, content)
-                    router.handle(text, ReplyContext(send=reply, bold=self.bold))
+                    reply_sender = self._create_reply_sender(chat_id)
+                    router.handle(text, ReplyContext(send=reply_sender, bold=self.bold))
             except KeyboardInterrupt:
                 logger.info("Polling Telegram dihentikan oleh pengguna")
                 break

@@ -136,29 +136,29 @@ def evaluate_control_stocks(symbols: list[str], end_date: date) -> dict[str, Any
     }
 
 
-def run_backtest(controls_path: str | None = None) -> dict[str, Any]:
-    """Jalankan siklus backtest lengkap dan simpan hasilnya ke data/backtest_result.json."""
-    suspensions_file = PROJECT_ROOT / "data" / "suspensions.json"
+def _load_unique_price_suspensions(suspensions_file: Path) -> list[dict[str, Any]]:
+    """Muat dan filter data suspensi terkait lonjakan harga kumulatif tanpa duplikasi."""
     suspensions_data: list[dict[str, Any]] = json.loads(suspensions_file.read_text(encoding="utf-8"))
-
-    # Filter hanya suspensi terkait lonjakan harga kumulatif
-    price_suspensions = [
-        item for item in suspensions_data if "harga" in str(item.get("reason", "")).lower()
-    ]
-
-    # Ambil catatan suspensi pertama per saham unik
     seen_symbols: set[str] = set()
     unique_suspensions: list[dict[str, Any]] = []
-    for item in price_suspensions:
-        symbol = str(item["symbol"])
-        if symbol not in seen_symbols:
+
+    for item in suspensions_data:
+        is_price_related = "harga" in str(item.get("reason", "")).lower()
+        symbol = str(item.get("symbol", ""))
+        if is_price_related and symbol and symbol not in seen_symbols:
             seen_symbols.add(symbol)
             unique_suspensions.append(item)
 
-    evaluation_rows = evaluate_suspended_stocks(unique_suspensions)
-    valid_evaluations = [row for row in evaluation_rows if "error" not in row]
+    return unique_suspensions
 
-    summary: dict[str, Any] = {
+
+def _create_evaluation_summary(
+    unique_suspensions: list[dict[str, Any]],
+    evaluation_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Susun ringkasan metrik deteksi dari hasil evaluasi suspensi."""
+    valid_evaluations = [row for row in evaluation_rows if "error" not in row]
+    return {
         "threshold": SCORE_THRESHOLD,
         "lookback_days": EVALUATION_LOOKBACK_DAYS,
         "n_suspended": len(unique_suspensions),
@@ -167,10 +167,19 @@ def run_backtest(controls_path: str | None = None) -> dict[str, Any]:
         "rows": evaluation_rows,
     }
 
+
+def run_backtest(controls_path: str | None = None) -> dict[str, Any]:
+    """Jalankan siklus backtest lengkap dan simpan hasilnya ke data/backtest_result.json."""
+    suspensions_file = PROJECT_ROOT / "data" / "suspensions.json"
+    unique_suspensions = _load_unique_price_suspensions(suspensions_file)
+
+    evaluation_rows = evaluate_suspended_stocks(unique_suspensions)
+    summary = _create_evaluation_summary(unique_suspensions, evaluation_rows)
+
     if controls_path:
         controls_file = Path(controls_path)
         control_symbols: list[str] = json.loads(controls_file.read_text(encoding="utf-8"))
-        # Pastikan tidak ada saham suspensi yang ikut di kelompok kontrol
+        seen_symbols = {str(item["symbol"]) for item in unique_suspensions}
         filtered_controls = [s for s in control_symbols if s not in seen_symbols]
         summary["controls"] = evaluate_control_stocks(filtered_controls, date(2026, 10, 1))
 
