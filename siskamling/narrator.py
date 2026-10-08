@@ -88,7 +88,7 @@ def build_alert_detail(
     trigger_text = "; ".join(target_reasons) if target_reasons else "tidak ada indikasi risiko kuat"
 
     return "\n".join([
-        f"{risk_emoji(target_score)} {target_symbol.replace('.JK', '')} — Skor Kentongan {target_score}/100",
+        f"{risk_emoji(target_score)} {target_symbol.replace('.JK', '')} — Indeks Risiko SQRI {target_score}/100",
         f"• Harga: {_format_signed_percent(ret_1d)} (1h) · {_format_signed_percent(ret_5d)} (5h) · {_format_signed_percent(ret_20d)} (20h)",
         vol_line,
         position_line,
